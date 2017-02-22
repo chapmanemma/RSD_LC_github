@@ -1,0 +1,34 @@
+/*This code takes real space simulation boxes and produces a light cone, simultaneously taking into account the peculiar velocities of the hydrogen atoms. The code interpolates between two redshift boxes in order to account for the evolution between discretised redshift boxes.
+
+ This code was written by Emma Chapman, Imperial College London. Please contact e.chapman@imperial.ac.uk with any comments or questions.
+ Please cite the accompanying paper () when publishing work which uses this code.
+ 
+ USAGE:
+ ./RSD_LC_v1.1.c workdir nu1 nu2 del_nu_lc FoV_deg [LC_Dim] [z1] [z2]
+ workdir: Working directory containing box folders. Lightcone will be output here in folder "Lightcone"
+ nu1: Frequency of first map in light cone (MHz)
+ nu2: Frequency of last map in light cone (MHz)
+ del_nu_lc: Frequency separation between light cone slices
+ FoV_deg: Field of view of light cone in degrees
+ LC_Dim: Number of pixels along side of light cone map (if not specificied assumed same as input box dimension)
+ z1: The lowest redshift box to include
+ z2: The highest redshift box to include
+ 
+ INPUT BOXES:
+ The box formats are expected to be in the same format as output by SimFast21, i.e. binary files with c ordering.
+ * = only if TS included in T21 calculation
+ () = name of box as output by simfast21
+
+ ionization (xHII)
+ non-linear density field (deltanl)
+ IGM temperature (TempX)*
+ collisional coupling (xc)*
+ Lyman-alpha coupling (xalpha)*
+ velocity field (vel)
+ 
+ OUTPUT:
+ A 3D fits file of brightness temperature in units of K with constant field of view accross a chosen frequency range.
+ 
+
+ Example:
+ mpirun -np 4 ./RSD_LC /Users/echapman/Documents/Data_Cubes/Simfast_200Mpc_z27_z6/Original 142.1 142.0 0.1 1.0 400 8.0 10.0
