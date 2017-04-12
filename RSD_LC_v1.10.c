@@ -194,20 +194,7 @@ int main(int argc, char * argv[]){
     setup_zD(ZZ,DD,DD2);
     z_i = cubic_splint(DD,ZZ,DD2,30000,r_i); // redshift of cell at first point in box along line of sight
     if (myid==0) printf("Here 6.11 r_i: %f z_i: %f \t d_box: %f \n",r_i,z_i,d_box);
-    //*********SET S,NU AND OMEGA RESOLUTIONS *********//
-    del_s = (c_Mpc_h/Hz(zmax))*(dz/(1.0+zmax));
-    del_s_pix = del_r/(1.0+zmax);
-   del_s_nu21 = (get_int_r(nu21/(nu21-del_nu_21)-1.0) - get_int_r(nu21/(nu21+del_nu_21)-1.0))/(1.0+zmax); // for testing 4/2/16
-
-    if (myid==0) printf("Here 0.1 del_s_nu21: %f del_s: %f \t del_s_pix: %f \n",del_s_nu21,del_s,del_s_pix); // should have del_s_nu21 <= del_s <= del_s_pix
-
-
-    if (del_s_pix < del_s) del_s = del_s_pix; // so always one integration point per pixel
-    //del_s = del_s/(float)dsdiv ;
-    if (del_s < del_s_nu21) del_s = del_s_nu21;
-    if (myid==0) printf("This code will step with ds %f \n",del_s);
-
-
+    //*********SET NU AND OMEGA RESOLUTIONS *********//
     n_maps = floor((nu1 - nu2)/del_nu_lc)+1;
     if (myid==0) printf("This code will produce %d maps spaced equally by %f MHz\n",n_maps,del_nu_lc);
     del_omega = FoV/(Dim);
@@ -303,7 +290,14 @@ int main(int argc, char * argv[]){
     for(z=zmax-dz;z>(zmin-dz/10);z-=dz){
         // for(z=9.0;z>(8.6);z-=dz){
 	zevent=0.0;
+        del_s = (c_Mpc_h/Hz(z))*(dz/(1.0+z));
+        del_s_pix = del_r/(1.0+z);
+        del_s_nu21 = (get_int_r(nu21/(nu21-del_nu_21)-1.0) - get_int_r(nu21/(nu21+del_nu_21)-1.0))/(1.0+z); // for testing 4/2/16
+
+        if (del_s_pix < del_s) del_s = del_s_pix; // so always one integration point per pixel
+        if (del_s < del_s_nu21) del_s = del_s_nu21;
         if (myid==0) printf("Filling frequency maps from box z = %f\n",z);fflush(0);
+        if (myid==0) printf("This code will step with ds %f \n",del_s);
         /************ READ IN DENSITY AND IONIZATION FIELDS TO CALC nHI  ***********/
         sprintf(fname, "%s/delta/deltanl_z%.3f_N%ld_L%.0f.dat",argv[1],z,global_N_smooth,global_L);
         fid=fopen(fname,"rb");
