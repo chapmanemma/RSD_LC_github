@@ -1,39 +1,37 @@
 
 /*This code takes real space simulation boxes and produces a light cone, simultaneously taking into account the peculiar velocities of the hydrogen atoms. The code interpolates between two redshift boxes in order to account for the evolution between discretised redshift boxes.
- This code uses MPI.
- This code allows one event or more than one event.
- Includes correction to TS. 
- Incude clunky option to turn off evolution interpolation.
- inc ludes del_s thermal width condition.
- Includes rewrite for new frequency change conditions.
 
  This code was written by Emma Chapman, Imperial College London. Please contact e.chapman@imperial.ac.uk with any comments or questions.
  Please cite the accompanying paper () when publishing work which uses this code.
  
  USAGE:
- ./RSD_LC_v1.1.c workdir nu1 nu2 del_nu_lc FoV_deg [LC_Dim]
+ ./RSD_LC_v1.1.c workdir nu1 nu2 del_nu_lc FoV_deg [LC_Dim] [z1] [z2]
  workdir: Working directory containing box folders. Lightcone will be output here in folder "Lightcone"
  nu1: Frequency of first map in light cone (MHz)
  nu2: Frequency of last map in light cone (MHz)
  del_nu_lc: Frequency separation between light cone slices
  FoV_deg: Field of view of light cone in degrees
  LC_Dim: Number of pixels along side of light cone map (if not specificied assumed same as input box dimension)
+ z1: The lowest redshift box to include
+ z2: The highest redshift box to include
  
  INPUT BOXES:
  The box formats are expected to be in the same format as output by SimFast21, i.e. binary files with c ordering.
  * = only if TS included in T21 calculation
  () = name of box as output by simfast21
+
  ionization (xHII)
  non-linear density field (deltanl)
- TO DO write descriptions of boxes
- (TempX)
- (xc)
- (xalpha)
- velociy field (vel)
+ IGM temperature (TempX)*
+ collisional coupling (xc)*
+ Lyman-alpha coupling (xalpha)*
+ velocity field (vel)
  
  OUTPUT:
  A 3D fits file of brightness temperature in units of K with constant field of view accross a chosen frequency range.
  
+
+ Example:
  mpirun -np 4 ./RSD_LC /Users/echapman/Documents/Data_Cubes/Simfast_200Mpc_z27_z6/Original 142.1 142.0 0.1 1.0 400 8.0 10.0
  
  *************************************************************/
@@ -95,9 +93,10 @@ int main(int argc, char * argv[]){
     //******************************************************************************************
     //*******************************ADVANCED USER CHANGEABLE PARAMETERS************************
     //**********careful of overwriting: output filenames will not automatically change**********
-    int pv,dsdiv,oneevent,dnu_off,evo;
+    int pv,oneevent,dnu_off,evo;
+    float dsdiv;
     pv=1; // SET TO ZERO IF WANT TO SET PV,DV=0
-    dsdiv = 1; // number to divide ds by to get smaller integration
+//    dsdiv = 10; // number to divide ds by to get smaller integration
     oneevent= 0; // set to one if want intital intensity of cell always to be CMB
     dnu_off = 0; // set to 1 if want to set d_nu = 0
     evo=1; //set to 1 to interpolate between z, z+dz boxes according to z_cell
@@ -125,10 +124,10 @@ int main(int argc, char * argv[]){
     double del_omega;// angular separation of lightcone cells.
     double del_nu_21;
     double nu_temp;
-    double nu_i; // Frequency of photon entering patch in comoving frame
-    double nu_f; // Frequency of photon leaving patch in comoving frame
+    double nu_i; // Frequency of photon entering patch 
+    double nu_f; // Frequency of photon leaving patch 
     double nu_min, nu_max; // Define intersection of frequency patch with line width
-    double del_nu; // Change in frequency of photon traversing patch ds in comoving frame
+    double del_nu; // Change in frequency of photon traversing patch ds
     double d_box,del_I,r,r_i,z_i;
     double i_r,j_r,k_r;
     int i,j,k,ij;
@@ -154,7 +153,7 @@ int main(int argc, char * argv[]){
     float del_s_nu21;
     float ave=0.0;
     long long aven=0;
-    
+    float zevent=0.0;    
     FoV = (FoVdeg*pi)/180.0 ;// in radians
     
     
@@ -204,9 +203,10 @@ int main(int argc, char * argv[]){
 
 
     if (del_s_pix < del_s) del_s = del_s_pix; // so always one integration point per pixel
-    del_s = del_s/(float)dsdiv ;
-    if (del_s < del_s_nu21) del_s = del_s_nu21;// HAH RESULTS IN NO EVENTS!
+    //del_s = del_s/(float)dsdiv ;
+    if (del_s < del_s_nu21) del_s = del_s_nu21;
     if (myid==0) printf("This code will step with ds %f \n",del_s);
+
 
     n_maps = floor((nu1 - nu2)/del_nu_lc)+1;
     if (myid==0) printf("This code will produce %d maps spaced equally by %f MHz\n",n_maps,del_nu_lc);
@@ -302,6 +302,7 @@ int main(int argc, char * argv[]){
     /**************************************************/
     for(z=zmax-dz;z>(zmin-dz/10);z-=dz){
         // for(z=9.0;z>(8.6);z-=dz){
+	zevent=0.0;
         if (myid==0) printf("Filling frequency maps from box z = %f\n",z);fflush(0);
         /************ READ IN DENSITY AND IONIZATION FIELDS TO CALC nHI  ***********/
         sprintf(fname, "%s/delta/deltanl_z%.3f_N%ld_L%.0f.dat",argv[1],z,global_N_smooth,global_L);
@@ -466,6 +467,7 @@ int main(int argc, char * argv[]){
                         nu_p = nu2 + (2.0*mm+1.0)*del_nu_lc/2.0; // middle of frequency bin being observed
 
                         for (int kk=0; ; kk++){
+//			    if (kk>=303 && kk <= 455 && myid==0 && ii==396 && jj==283) printf("Here 1: %f  \t %f \t %f \n",nu_i,nu_f,del_nu);
                             /********************** what cell are we looking at? **********************/
                             if (z_cell < z ) {break;}
                             fraction=(z_cell-z)/(dz);
@@ -550,6 +552,7 @@ int main(int argc, char * argv[]){
 	
 			      if (!(((nu_i<(nu21-del_nu_21/2.0)) && (nu_f<(nu21-del_nu_21/2.0))) ||   ((nu_i>(nu21+del_nu_21/2.0)) && (nu_f>(nu21+del_nu_21/2.0))))) // added 10/2 to charcterise in terms of non-events
                                 {
+				zevent=1.0;
 				  if (del_nu < 0){ // changed to _rest 10/2/16
 				    nu_max = nu_f;
 				    nu_temp = nu21+del_nu_21/2.0;
@@ -574,8 +577,8 @@ int main(int argc, char * argv[]){
 				  else if (nu_max < nu_min) del_I = 0.0;
 				  else if (nu_max > nu_min) del_I = 1.60137e-40/(Hz(z_cell)*(1.0+dvds_H_pix)) *
 							      nHI_pix* c_m * (nu_max - nu_min) / ((nu21*1.0e6) * del_nu_21);
-				  if (myid==0 && ii==396 && jj==283) printf("%f  \t %d \t %d \n",z,kk,mm); 
-				  //	  if (myid==0 && ii==396 && jj==283) printf("%d  \t %e \t %e \t %e \t %e \t %e \t %e \t %e \t %e \n",kk ,nu_max -nu_min, nu_i_rest,nu_f_rest,nu21+del_nu_21/2.0,nu21-del_nu_21/2.0,del_I,del_s,del_nu_21); // for line_follower.m
+				  if (myid==0 && ii==396 && jj==283) printf("Here 2: %f \t %f \t %f  \t %f \t %f \n",v_c_i,dvds_H_interp,nu_i,nu_f,del_nu); 
+				  if (myid==0 && ii==396 && jj==283) printf("%d  \t %e \t %e \t %e \t %e \t %e \t %e \t %e \t %e \n",kk ,nu_max -nu_min, nu_i,nu_f,nu21+del_nu_21/2.0,nu21-del_nu_21/2.0,del_I,del_s,del_nu_21); // for line_follower.m
 				  // ADJUST FOR HIGH REDSHIFT
 				  if(z>(global_Zminsfr-global_Dzsim/10) && global_use_Lya_xrays==1) {
 				    if (oneevent==1) {
@@ -605,12 +608,14 @@ int main(int argc, char * argv[]){
                             r = r - del_s * (1.0 + z_cell);
                             z_cell = z_cell - del_s *(1+z_cell)*Hz(z_cell)/c_Mpc_h; // z of next pixel
                             nu_i = nu_f;
+//			    if (kk>=303 && kk <= 455 && myid==0 && ii==396 && jj==283) printf("Here 3: %f  \t %f \t %f \n",nu_i,nu_f,del_nu);
                         } // end of kk loop i.e. line of sight ended
                     }// end of filling of this map
 		    //   if (ii==396 && jj==283) printf("here3: %ld \n",num[0+n_maps*(jj+Dim*ii)]);
                 } // MPI loop
             } // end of jj loop
         } // end of ii loop
+	//if (zevent==1.0) printf("Events at this redshift!"); 
     } // end of redshift cycle
     // CONVERT TO Tb
     
@@ -654,7 +659,7 @@ int main(int argc, char * argv[]){
     // OUTPUT ALL MAPS WITH DEL_NU SEPARATION
     
     if (myid==0){
-      sprintf(fname,"%s/deltaTb_RSD/LightconeRSD_N%d_FOV%06.4f_dnu%04.2fMHz_%06.2fMHz_%06.2fMHz_ds%08.6f_div%d_pv%d_oneevent%d.dat",argv[1],Dim,FoVdeg,del_nu_lc,nu1,nu2,del_s,dsdiv,pv,oneevent);
+      sprintf(fname,"%s/deltaTb_RSD/LightconeRSD_N%d_FOV%06.4f_dnu%04.2fMHz_%06.2fMHz_%06.2fMHz_ds%08.6f_div%05.2f_pv%d_oneevent%d.dat",argv[1],Dim,FoVdeg,del_nu_lc,nu1,nu2,del_s,dsdiv,pv,oneevent);
         if((fid = fopen(fname,"wb"))==NULL) {
             printf("Cannot open file:%s...\n",fname);
             exit(1);
@@ -664,7 +669,7 @@ int main(int argc, char * argv[]){
     }
     
     if (myid==0){
-      sprintf(fname,"%s/deltaTb_RSD/NUM_RSD_N%d_FOV%06.4f_dnu%04.2fMHz_%06.2fMHz_%06.2fMHz_ds%08.6f_div%d_pv%d_oneevent%d.dat",argv[1],Dim,FoVdeg,del_nu_lc,nu1,nu2,del_s,dsdiv,pv,oneevent);
+      sprintf(fname,"%s/deltaTb_RSD/NUM_RSD_N%d_FOV%06.4f_dnu%04.2fMHz_%06.2fMHz_%06.2fMHz_ds%08.6f_div%05.2f_pv%d_oneevent%d.dat",argv[1],Dim,FoVdeg,del_nu_lc,nu1,nu2,del_s,dsdiv,pv,oneevent);
         if((fid = fopen(fname,"wb"))==NULL) {
             printf("Cannot open file:%s...\n",fname);
             exit(1);
