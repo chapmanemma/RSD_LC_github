@@ -181,8 +181,8 @@ int main(int argc, char * argv[]){
         }
         zmin=zmax-dz*ceil((zmax-zmin)/dz); /* make sure (zmax-zmin)/dz is an integer so that we get same redshifts starting from zmin or zmax...*/
     } else {
-        zmin=global_Zminsim;
-        zmax=global_Zmaxsim;
+      zmin = floor(nu21/(nu1)-1.)-dz;
+      zmax = ceil(nu21/(nu2)-1.)+dz;
         dz=global_Dzsim;
     }
     
@@ -284,20 +284,22 @@ int main(int argc, char * argv[]){
     }
     
     if (myid==0) printf("Here3 %f \t %f \t %f \n",zmax,zmin,dz);
+    del_s = (c_Mpc_h/Hz(z))*(dz/(1.0+zmax));
+        del_s_pix = del_r/(1.0+zmax);
+        del_s_nu21 = (get_int_r(nu21/(nu21-del_nu_21)-1.0) - get_int_r(nu21/(nu21+del_nu_21)-1.0))/(1.0+zmax); // for testing 4/2/16
+        if (del_s < del_s_nu21) del_s = del_s_nu21;
+        if (del_s_pix < del_s) del_s = del_s_pix; // so always one integration point per pixel
+
+	 if (myid==0) printf("This code will step with ds %f \n",del_s);
     /**************************************************/
     /************** redshift cycle ********************/
     /**************************************************/
     for(z=zmax-dz;z>(zmin-dz/10);z-=dz){
         // for(z=9.0;z>(8.6);z-=dz){
 	zevent=0.0;
-        del_s = (c_Mpc_h/Hz(z))*(dz/(1.0+z));
-        del_s_pix = del_r/(1.0+z);
-        del_s_nu21 = (get_int_r(nu21/(nu21-del_nu_21)-1.0) - get_int_r(nu21/(nu21+del_nu_21)-1.0))/(1.0+z); // for testing 4/2/16
-
-        if (del_s_pix < del_s) del_s = del_s_pix; // so always one integration point per pixel
-        if (del_s < del_s_nu21) del_s = del_s_nu21;
+      
         if (myid==0) printf("Filling frequency maps from box z = %f\n",z);fflush(0);
-        if (myid==0) printf("This code will step with ds %f \n",del_s);
+       
         /************ READ IN DENSITY AND IONIZATION FIELDS TO CALC nHI  ***********/
         sprintf(fname, "%s/delta/deltanl_z%.3f_N%ld_L%.0f.dat",argv[1],z,global_N_smooth,global_L);
         fid=fopen(fname,"rb");
@@ -571,7 +573,7 @@ int main(int argc, char * argv[]){
 				  else if (nu_max < nu_min) del_I = 0.0;
 				  else if (nu_max > nu_min) del_I = 1.60137e-40/(Hz(z_cell)*(1.0+dvds_H_pix)) *
 							      nHI_pix* c_m * (nu_max - nu_min) / ((nu21*1.0e6) * del_nu_21);
-				  if (myid==0 && ii==396 && jj==283) printf("Here 2: %f \t %f \t %f  \t %f \t %f \n",v_c_i,dvds_H_interp,nu_i,nu_f,del_nu); 
+//				  if (myid==0 && ii==396 && jj==283) printf("Here 2: %f \t %f \t %f  \t %f \t %f \n",v_c_i,dvds_H_interp,nu_i,nu_f,del_nu); 
 				  if (myid==0 && ii==396 && jj==283) printf("%d  \t %e \t %e \t %e \t %e \t %e \t %e \t %e \t %e \n",kk ,nu_max -nu_min, nu_i,nu_f,nu21+del_nu_21/2.0,nu21-del_nu_21/2.0,del_I,del_s,del_nu_21); // for line_follower.m
 				  // ADJUST FOR HIGH REDSHIFT
 				  if(z>(global_Zminsfr-global_Dzsim/10) && global_use_Lya_xrays==1) {
