@@ -127,7 +127,7 @@ sprintf(fname,"%s/Lightcone/frequency_event_lightcone_FoVdeg%4.2f_Dim%d.txt",arg
     dz=global_Dzsim;
   }
   
-  d_box = get_int_r(zmax); // changed to zmax 16/12
+  d_box = get_int_r(global_Zmaxsim); // changed to global zmax 23/05
   zbox = zmax;
   //*********SET S,NU AND OMEGA RESOLUTIONS *********//  
   
