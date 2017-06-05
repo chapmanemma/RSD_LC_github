@@ -1,5 +1,6 @@
 
 /*This code takes real space simulation boxes and produces a light cone, simultaneously taking into account the peculiar velocities of the hydrogen atoms. The code interpolates between two redshift boxes in order to account for the evolution between discretised redshift boxes.
+This code has been gutted by Mario
 
  This code was written by Emma Chapman, Imperial College London. Please contact e.chapman@imperial.ac.uk with any comments or questions.
  Please cite the accompanying paper () when publishing work which uses this code.
@@ -73,10 +74,11 @@ void error(char error_text[]);
 void free_dvector(double *, int , int );
 
 int main(int argc, char * argv[]){
-    int numProcs, myid;
-    MPI_Init (&argc,&argv);
-    MPI_Comm_rank (MPI_COMM_WORLD, &myid);
-    MPI_Comm_size (MPI_COMM_WORLD, &numProcs);
+  int myid=0;
+  //int numProcs, myid;
+    //  MPI_Init (&argc,&argv);
+    //  MPI_Comm_rank (MPI_COMM_WORLD, &myid);
+    //  MPI_Comm_size (MPI_COMM_WORLD, &numProcs);
     get_Simfast21_params(argv[1]);
     //*******************************USER CHANGEABLE PARAMETERS*********************************
     double del_nu_lc,FoVdeg,nu1,nu2;
@@ -107,15 +109,14 @@ int main(int argc, char * argv[]){
     float *temp;
     double Icmb,Tcmb,xtot,aver,xtotdz;
     float *t21,*t21dz;
-    float v_c_interp,v_cdz_interp,nHI_interp,nHIdz_interp,t21_interp,t21dz_interp,TS_interp,TSdz_interp;
+    float v_c_interp,v_cdz_interp,nHI_interp,nHIdz_interp,TS_interp,TSdz_interp;
     float dvds_H_interp, dvds_Hdz_interp;
     float fraction_j,fraction_i;
-    float nHI_pix,t21_pix,TS_pix;
+    float nHI_pix,TS_pix;
     float v_c_i;//initial peculiar velocity
     double del_r_lc;
     double zmin,zmax,dz,z;
     double pi=3.14159;
-    double z_cell=0.0;
     int n_maps; //Number of maps
     double del_r= global_dx_smooth;
     double del_s,del_s_pix;
@@ -153,7 +154,7 @@ int main(int argc, char * argv[]){
     float del_s_nu21;
     float ave=0.0;
     long long aven=0;
-    float zevent=0.0;    
+    float zevent=0.0,zbox, rmax;    
     FoV = (FoVdeg*pi)/180.0 ;// in radians
     
     
@@ -163,6 +164,7 @@ int main(int argc, char * argv[]){
         exit(1);
     }
     del_nu_21 = nu21/c_m * pow((2.0 * 10000.0 * 1.3806503e-23 / mbar) ,0.5);
+    if (myid==0) printf("del_nu_21: %f \n", del_nu_21);
     // del_nu_21 = del_nu_21 * 10.0; // TESTING ONLY
     c_Mpc_h = c_m/(pc*1.0e6)*global_hubble;
     
@@ -187,14 +189,15 @@ int main(int argc, char * argv[]){
       zmax = ceil(nu21/(nu2)-1.)+2*dz;
       if (zmax > global_Zmaxsim) zmax  = global_Zmaxsim;
     }
+
+    rmax = get_int_r(zmax);
     d_box = get_int_r(global_Zmaxsim);
-    r_i = d_box-del_r/2.0;
+    
     // Set up arrays for z to r interpolation
     ZZ=dvector(1,30000);
     DD=dvector(1,30000);DD2=dvector(1,30000);
     setup_zD(ZZ,DD,DD2);
-    z_i = cubic_splint(DD,ZZ,DD2,30000,r_i); // redshift of cell at first point in box along line of sight
-    if (myid==0) printf("Here 6.11 r_i: %f z_i: %f \t d_box: %f \n",r_i,z_i,d_box);
+  
     //*********SET NU AND OMEGA RESOLUTIONS *********//
     n_maps = floor((nu1 - nu2)/del_nu_lc)+1;
     if (myid==0) printf("This code will produce %d maps spaced equally by %f MHz\n",n_maps,del_nu_lc);
@@ -263,9 +266,19 @@ int main(int argc, char * argv[]){
         printf("Problem allocating memory to arrays...\n");
         exit(1);
     }
-    
-    for(int ind=0;ind<n_maps*Dim*Dim;ind++) I21[ind]=0.0;//SO ALL ZERO FOR MERGING OF MPI ARRAYS
-
+            for (int mm=0;mm<n_maps;mm++){
+	      nu_p = nu2 + (2.0*mm+1.0)*del_nu_lc/2.0; // middle of frequency bin being observed
+			      
+			              Tcmb=Tcmb0*(nu21/nu_p);
+			              Icmb = Tcmb * 2.0*k_b*pow(nu21,2.0)/pow(c_m,2.0)*1.0e12;
+	      for(int ind=0;ind<Dim*Dim;ind++){
+ 
+	  
+    	    
+				      I21[mm+n_maps*ind] = Icmb;
+			
+	 }
+	    }
     if(!(all_I21=(float *) malloc(LC_size*sizeof(float)))) {
         printf("Problem allocating memory to arrays...\n");
         exit(1);
@@ -284,71 +297,100 @@ int main(int argc, char * argv[]){
         exit(1);
     }
     
-    del_s = (c_Mpc_h/Hz(z))*(dz/(1.0+zmax));
-          del_s_pix = del_r/(1.0+zmax);
-        del_s_nu21 = (get_int_r(nu21/(nu21-del_nu_21)-1.0) - get_int_r(nu21/(nu21+del_nu_21)-1.0))/(1.0+zmax); // for testing 4/2/16
-        if (del_s < del_s_nu21) del_s = del_s_nu21;
-        if (del_s_pix < del_s) del_s = del_s_pix; // so always one integration point per pixel
-	//	del_s = 0.001;
-		if (myid==0) printf("This code will step with ds %f \n",del_s);
-    /**************************************************/
-    /************** redshift cycle ********************/
-    /**************************************************/
-    for(z=zmax-dz;z>(zmin-dz/10);z-=dz){
-        // for(z=9.0;z>(8.6);z-=dz){
-	zevent=0.0;
-      
-	  if (myid==0) printf("Filling frequency maps from box z = %f\n",z);fflush(0);
-	/*
-	del_s = (c_Mpc_h/Hz(z))*(dz/(1.0+z));
-        del_s_pix = del_r/(1.0+z);
-        del_s_nu21 = (get_int_r(nu21/(nu21-del_nu_21)-1.0) - get_int_r(nu21/(nu21+del_nu_21)-1.0))/(1.0+z); 
-        if (del_s < del_s_nu21) del_s = del_s_nu21;
-        if (del_s_pix < del_s) del_s = del_s_pix; // so always one integration point per pixel
-	if (myid==0) printf("This code will step with ds %f \n",del_s);*/
+    del_s = (c_Mpc_h/Hz(zmax))*(dz/(1.0+zmax));
+    del_s_pix = del_r/(1.0+zmax);
+    del_s_nu21 = (get_int_r(nu21/(nu21-del_nu_21)-1.0) - get_int_r(nu21/(nu21+del_nu_21)-1.0))/(1.0+zmax); // for testing 4/2/16
+  // 	del_s = 0.01;
+    if (myid==0) printf("This code will step with ds %f \t %f \t %f \t\n",del_s, del_s_pix,del_s_nu21);
+    if (del_s < del_s_nu21) del_s = del_s_nu21;
+    if (del_s_pix < del_s) del_s = del_s_pix; // so always one integration point per pixel
+    // del_s = 0.01;
+    printf("del_s condition: %e \n",c_Mpc_h/Hz(zmax)* 1.0/(nu1*1e6));
+   
+    if (myid==0) printf("This code will step with ds %f \n",del_s);
+    
+    
+    zevent=0.0;
+    
+
+    
+	  /* upload boxes FIRST TIME*/
+  
+    
+    sprintf(fname, "%s/Velocity/vel_z%.3f_N%ld_L%.0f_3.dat",argv[1],zmax-dz,global_N_smooth,global_L);
+    fid=fopen(fname,"rb");
+    if (fid==NULL) {printf("Error reading vel file... Check path or if the file exists...");  printf("Path: %s",fname);exit (1);}
+    fread(temp,sizeof(float),global_N3_smooth,fid);
+    fclose(fid);
+    for(i=0;i<global_N3_smooth;i++) v_c[i] = temp[i]; // velocity in proper units divided by c
+
+        sprintf(fname, "%s/Velocity/vel_z%.3f_N%ld_L%.0f_3.dat",argv[1],zmax,global_N_smooth,global_L);
+        fid=fopen(fname,"rb");
+        if (fid==NULL) {printf("Error reading vel file... Check path or if the file exists..."); exit (1);}
+        fread(temp,sizeof(float),global_N3_smooth,fid);
+        fclose(fid);
+        for(i=0;i<global_N3_smooth;i++) v_cdz[i] = temp[i]; // velocity in proper units divided by c
+
+
+
+	  /************** READ IN VELOCITY AND VELOCITY GRADIENT BOXES ***************/
+        sprintf(fname, "%s/Velocity/dvdr_z%.3f_N%ld_L%.0f_3.dat",argv[1],zmax-dz,global_N_smooth,global_L);
+        fid=fopen(fname,"rb");
+        if (fid==NULL) {printf("Error reading dvdr file... Check path or if the file exists...");printf("Path: %s \n",fname); exit (1);}
+        fread(temp,sizeof(float),global_N3_smooth,fid);
+        fclose(fid);
+        for(i=0;i<global_N3_smooth;i++) dvds_H[i] = temp[i]; // dvds divided by H
+        
+        sprintf(fname, "%s/Velocity/dvdr_z%.3f_N%ld_L%.0f_3.dat",argv[1],zmax,global_N_smooth,global_L);
+        fid=fopen(fname,"rb");
+        if (fid==NULL) {printf("Error reading dvdr file... Check path or if the file exists..."); exit (1);}
+        fread(temp,sizeof(float),global_N3_smooth,fid);
+        fclose(fid);
+        for(i=0;i<global_N3_smooth;i++) dvds_Hdz[i] = temp[i]; // dvds divided by H
+        
 	
-        /************ READ IN DENSITY AND IONIZATION FIELDS TO CALC nHI  ***********/
-        sprintf(fname, "%s/delta/deltanl_z%.3f_N%ld_L%.0f.dat",argv[1],z,global_N_smooth,global_L);
-        fid=fopen(fname,"rb");
-        if (fid==NULL) {
+	  /************ READ IN DENSITY AND IONIZATION FIELDS TO CALC nHI  ***********/
+	  sprintf(fname, "%s/delta/deltanl_z%.3f_N%ld_L%.0f.dat",argv[1],zmax-dz,global_N_smooth,global_L);
+	  fid=fopen(fname,"rb");
+	  if (fid==NULL) {
             printf("Error opening file:%s\n",fname);
             exit (1);}
-        fread(temp,sizeof(float),global_N3_smooth,fid);
-        fclose(fid);
-        for(i=0;i<global_N3_smooth;i++) nHI[i] = (1.0+temp[i]);
-        
-        sprintf(fname, "%s/delta/deltanl_z%.3f_N%ld_L%.0f.dat",argv[1],z+dz,global_N_smooth,global_L);
-        fid=fopen(fname,"rb");
-        if (fid==NULL) {
+	  fread(temp,sizeof(float),global_N3_smooth,fid);
+	  fclose(fid);
+	  for(i=0;i<global_N3_smooth;i++) nHI[i] = (1.0+temp[i]);
+  
+	  sprintf(fname, "%s/delta/deltanl_z%.3f_N%ld_L%.0f.dat",argv[1],zmax,global_N_smooth,global_L);
+	  fid=fopen(fname,"rb");
+	  if (fid==NULL) {
             printf("Error opening file:%s\n",fname);
             exit (1);}
-        fread(temp,sizeof(float),global_N3_smooth,fid);
-        fclose(fid);
+	  fread(temp,sizeof(float),global_N3_smooth,fid);
+	  fclose(fid);
         
-        for(i=0;i<global_N3_smooth;i++) nHIdz[i] = (1.0+temp[i]);
+	  for(i=0;i<global_N3_smooth;i++) nHIdz[i] = (1.0+temp[i]);
         
-        sprintf(fname,"%s/Ionization/xHII_z%.3f_eff%.2lf_N%ld_L%.0f.dat",argv[1],z,global_eff,global_N_smooth,global_L);
-        if((fid = fopen(fname,"rb"))==NULL) {
+	  sprintf(fname,"%s/Ionization/xHII_z%.3f_eff%.2lf_N%ld_L%.0f.dat",argv[1],zmax-dz,global_eff,global_N_smooth,global_L);
+	  if((fid = fopen(fname,"rb"))==NULL) {
             printf("Error opening file:%s\n",fname);
             exit(1);
-        }
-        fread(temp,sizeof(float),global_N3_smooth,fid);
-        fclose(fid);
-        for(i=0;i<global_N3_smooth;i++) nHI[i] =  nHI[i] * (1. - temp[i]) * global_omega_b * 3.0 * pow(H0 * global_hubble,2.0) / (8.0 * PI * G) * pow(1.0+z,3.0) * 0.76 / mbar;
+	  }
+	  fread(temp,sizeof(float),global_N3_smooth,fid);
+	  fclose(fid);
+	  for(i=0;i<global_N3_smooth;i++) nHI[i] =  nHI[i] * (1. - temp[i]) * global_omega_b * 3.0 * pow(H0 * global_hubble,2.0) / (8.0 * PI * G) * pow(1.0+zmax-dz,3.0) * 0.76 / mbar;
         
-        sprintf(fname,"%s/Ionization/xHII_z%.3f_eff%.2lf_N%ld_L%.0f.dat",argv[1],z+dz,global_eff,global_N_smooth,global_L);
-        if((fid = fopen(fname,"rb"))==NULL) {
+	  sprintf(fname,"%s/Ionization/xHII_z%.3f_eff%.2lf_N%ld_L%.0f.dat",argv[1],zmax,global_eff,global_N_smooth,global_L);
+	  if((fid = fopen(fname,"rb"))==NULL) {
             printf("Error opening file:%s\n",fname);
             exit(1);
-        }
-        fread(temp,sizeof(float),global_N3_smooth,fid);
-        fclose(fid);
-        for(i=0;i<global_N3_smooth;i++) nHIdz[i] =  nHIdz[i] * (1. - temp[i]) * global_omega_b * 3.0 * pow(H0 * global_hubble,2.0) / (8.0 * PI * G) * pow(1.0+z+dz,3.0) * 0.76 / mbar;
+	  }
+	  fread(temp,sizeof(float),global_N3_smooth,fid);
+	  fclose(fid);
+	  for(i=0;i<global_N3_smooth;i++) nHIdz[i] =  nHIdz[i] * (1. - temp[i]) * global_omega_b * 3.0 * pow(H0 * global_hubble,2.0) / (8.0 * PI * G) * pow(1.0+zmax,3.0) * 0.76 / mbar;
         /************** READ IN XRAY FILES IF USING TS ****************************/
-        if(z>(global_Zminsfr-global_Dzsim/10) && global_use_Lya_xrays==1) {
-	  Tcmb=Tcmb0*(1.+z);
-	  Tcmbdz=Tcmb0*(1.+z+dz);
-	  sprintf(fname,"%s/x_c/xc_z%.3lf_N%ld_L%.0f.dat",argv[1],z,global_N_smooth,global_L);
+	 if(zmax-dz>(global_Zminsfr-global_Dzsim/10) && global_use_Lya_xrays==1) {
+	  Tcmb=Tcmb0*(1.+zmax-dz);
+	  Tcmbdz=Tcmb0*(1.+zmax);
+	  sprintf(fname,"%s/x_c/xc_z%.3lf_N%ld_L%.0f.dat",argv[1],zmax-dz,global_N_smooth,global_L);
 	  if((fid = fopen(fname,"rb"))==NULL) {
 	    printf("Error opening file:%s\n",fname);
 	    exit(1);
@@ -357,7 +399,7 @@ int main(int argc, char * argv[]){
 	  fclose(fid);
 	  for(i=0;i<global_N3_smooth;i++) t21[i]=(double)temp[i];
           
-	  sprintf(fname,"%s/x_c/xc_z%.3lf_N%ld_L%.0f.dat",argv[1],z+dz,global_N_smooth,global_L);
+	  sprintf(fname,"%s/x_c/xc_z%.3lf_N%ld_L%.0f.dat",argv[1],zmax,global_N_smooth,global_L);
 	  if((fid = fopen(fname,"rb"))==NULL) {
 	    printf("Error opening file:%s\n",fname);
 	    exit(1);
@@ -366,7 +408,7 @@ int main(int argc, char * argv[]){
 	  fclose(fid);
 	  for(i=0;i<global_N3_smooth;i++) t21dz[i]=(double)temp[i];
           
-	  sprintf(fname,"%s/Lya/xalpha_z%.3lf_N%ld_L%.0f.dat",argv[1],z,global_N_smooth,global_L);
+	  sprintf(fname,"%s/Lya/xalpha_z%.3lf_N%ld_L%.0f.dat",argv[1],zmax-dz,global_N_smooth,global_L);
 	  if((fid = fopen(fname,"rb"))==NULL) {
 	    printf("Error opening file:%s\n",fname);
 	    exit(1);
@@ -378,7 +420,7 @@ int main(int argc, char * argv[]){
 	    xtot=(double)temp[i]+t21[i];
 	    t21[i]=xtot/(1.+xtot);
 	  }
-	  sprintf(fname,"%s/Lya/xalpha_z%.3lf_N%ld_L%.0f.dat",argv[1],z+dz,global_N_smooth,global_L);
+	  sprintf(fname,"%s/Lya/xalpha_z%.3lf_N%ld_L%.0f.dat",argv[1],zmax,global_N_smooth,global_L);
 	  if((fid = fopen(fname,"rb"))==NULL) {
 	    printf("Error opening file:%s\n",fname);
 	    exit(1);
@@ -392,7 +434,7 @@ int main(int argc, char * argv[]){
 	    t21dz[i]=xtotdz/(1.+xtotdz);
 	  }
           
-	  sprintf(fname,"%s/xrays/TempX_z%.3lf_N%ld_L%.0f.dat",argv[1],z,global_N_smooth,global_L);
+	  sprintf(fname,"%s/xrays/TempX_z%.3lf_N%ld_L%.0f.dat",argv[1],zmax-dz,global_N_smooth,global_L);
 	  if((fid = fopen(fname,"rb"))==NULL) {
 	    printf("Error opening file:%s\n",fname);
 	    exit(1);
@@ -405,7 +447,7 @@ int main(int argc, char * argv[]){
 	    TS[i]=Tcmb/(1.-t21[i]);
 	  }
             
-            sprintf(fname,"%s/xrays/TempX_z%.3lf_N%ld_L%.0f.dat",argv[1],z+dz,global_N_smooth,global_L);
+            sprintf(fname,"%s/xrays/TempX_z%.3lf_N%ld_L%.0f.dat",argv[1],zmax,global_N_smooth,global_L);
             if((fid = fopen(fname,"rb"))==NULL) {
                 printf("Error opening file:%s\n",fname);
                 exit(1);
@@ -417,101 +459,253 @@ int main(int argc, char * argv[]){
                 t21dz[i]=t21dz[i]*(1.-Tcmbdz/(double)temp[i]); // Temperature correction for high redshifts
                 TSdz[i]=Tcmbdz/(1.-t21dz[i]);
             }
-        }else {
-            for(i=0;i<global_N3_smooth;i++) t21[i]=1.0;
-            for(i=0;i<global_N3_smooth;i++) t21dz[i]=1.0;
+	 }
+       
+        	else {
+            for(i=0;i<global_N3_smooth;i++) TS[i]=100000.0;
+            for(i=0;i<global_N3_smooth;i++) TSdz[i]=100000.0;
+	    
         }
-        
-        /************** READ IN VELOCITY AND VELOCITY GRADIENT BOXES ***************/
-        sprintf(fname, "%s/Velocity/vel_z%.3f_N%ld_L%.0f_3.dat",argv[1],z,global_N_smooth,global_L);
-        fid=fopen(fname,"rb");
-        if (fid==NULL) {printf("Error reading vel file... Check path or if the file exists...");  printf("Path: %s",fname);exit (1);}
-        fread(temp,sizeof(float),global_N3_smooth,fid);
-        fclose(fid);
-        for(i=0;i<global_N3_smooth;i++) v_c[i] = temp[i]; // velocity in proper units divided by c
-        sprintf(fname, "%s/Velocity/dvdr_z%.3f_N%ld_L%.0f_3.dat",argv[1],z,global_N_smooth,global_L);
+
+        fflush(stdout);
+	
+	
+        /************START LOOPING THROUGH redshift ****************************/
+
+	zbox=zmax-dz;
+	r=rmax;
+	int kk=0;
+	
+	for(z=zmax; z>=zmin; kk++) { 
+
+	  if(z<zbox){
+	    zbox=zbox-dz;
+	  /* upload boxes */
+	  /************** READ IN VELOCITY AND VELOCITY GRADIENT BOXES ***************/
+        sprintf(fname, "%s/Velocity/dvdr_z%.3f_N%ld_L%.0f_3.dat",argv[1],zbox,global_N_smooth,global_L);
         fid=fopen(fname,"rb");
         if (fid==NULL) {printf("Error reading dvdr file... Check path or if the file exists...");printf("Path: %s \n",fname); exit (1);}
         fread(temp,sizeof(float),global_N3_smooth,fid);
         fclose(fid);
         for(i=0;i<global_N3_smooth;i++) dvds_H[i] = temp[i]; // dvds divided by H
         
-        sprintf(fname, "%s/Velocity/vel_z%.3f_N%ld_L%.0f_3.dat",argv[1],z+dz,global_N_smooth,global_L);
-        fid=fopen(fname,"rb");
-        if (fid==NULL) {printf("Error reading vel file... Check path or if the file exists..."); exit (1);}
-        fread(temp,sizeof(float),global_N3_smooth,fid);
-        fclose(fid);
-        for(i=0;i<global_N3_smooth;i++) v_cdz[i] = temp[i]; // velocity in proper units divided by c
-        sprintf(fname, "%s/Velocity/dvdr_z%.3f_N%ld_L%.0f_3.dat",argv[1],z+dz,global_N_smooth,global_L);
+        sprintf(fname, "%s/Velocity/dvdr_z%.3f_N%ld_L%.0f_3.dat",argv[1],zbox+dz,global_N_smooth,global_L);
         fid=fopen(fname,"rb");
         if (fid==NULL) {printf("Error reading dvdr file... Check path or if the file exists..."); exit (1);}
         fread(temp,sizeof(float),global_N3_smooth,fid);
         fclose(fid);
         for(i=0;i<global_N3_smooth;i++) dvds_Hdz[i] = temp[i]; // dvds divided by H
         
-        fflush(stdout);
-        /************START LOOPING THROUGH angles and s****************************/
-        for (int ii=0;ii<Dim;ii++){
-//            if (myid==0) printf("ii: %d \n ",ii); fflush(0);
-            for (int jj=0;jj<Dim;jj++){
-                ij = ii+jj*Dim;
-                if (ij % numProcs == myid){
-                    mm_min = 0;
-                    mm_max = n_maps-1;
-                    for (int mm=0;mm<n_maps;mm++){
-                        nu_p = nu2 + (2.0*mm+1.0)*del_nu_lc/2.0;
-                        if (nu_p < nu21/(z+1.)-5.) {mm_min=mm;} // Only searches redshift boxes withing 5MHz range of direct frequency equivalent. Makes code much faster.
-                        if (nu_p < nu21/(z+1.)+5.) {mm_max=mm;}
-                    }
-                    for (int mm=mm_min;mm<mm_max+1;mm++){
-                        z_cell = z_i; // redshift of cell at k=0. Reinitialized for every map being filled.
-                        r=r_i; //comoving distance of cell at k=0.
-                        
-                        nu_p = nu2 + (2.0*mm+1.0)*del_nu_lc/2.0; // middle of frequency bin being observed
+	
+	  /************ READ IN DENSITY AND IONIZATION FIELDS TO CALC nHI  ***********/
+	  sprintf(fname, "%s/delta/deltanl_z%.3f_N%ld_L%.0f.dat",argv[1],zbox,global_N_smooth,global_L);
+	  fid=fopen(fname,"rb");
+	  if (fid==NULL) {
+            printf("Error opening file:%s\n",fname);
+            exit (1);}
+	  fread(temp,sizeof(float),global_N3_smooth,fid);
+	  fclose(fid);
+	  for(i=0;i<global_N3_smooth;i++) nHI[i] = (1.0+temp[i]);
+  
+	  sprintf(fname, "%s/delta/deltanl_z%.3f_N%ld_L%.0f.dat",argv[1],zbox+dz,global_N_smooth,global_L);
+	  fid=fopen(fname,"rb");
+	  if (fid==NULL) {
+            printf("Error opening file:%s\n",fname);
+            exit (1);}
+	  fread(temp,sizeof(float),global_N3_smooth,fid);
+	  fclose(fid);        
+	  for(i=0;i<global_N3_smooth;i++) nHIdz[i] = (1.0+temp[i]);
+        
+	  sprintf(fname,"%s/Ionization/xHII_z%.3f_eff%.2lf_N%ld_L%.0f.dat",argv[1],zbox,global_eff,global_N_smooth,global_L);
+	  if((fid = fopen(fname,"rb"))==NULL) {
+            printf("Error opening file:%s\n",fname);
+            exit(1);
+	  }
+	  fread(temp,sizeof(float),global_N3_smooth,fid);
+	  fclose(fid);
+	  for(i=0;i<global_N3_smooth;i++) nHI[i] =  nHI[i] * (1. - temp[i]) * global_omega_b * 3.0 * pow(H0 * global_hubble,2.0) / (8.0 * PI * G) * pow(1.0+zbox,3.0) * 0.76 / mbar;
+        
+	  sprintf(fname,"%s/Ionization/xHII_z%.3f_eff%.2lf_N%ld_L%.0f.dat",argv[1],zbox+dz,global_eff,global_N_smooth,global_L);
+	  if((fid = fopen(fname,"rb"))==NULL) {
+            printf("Error opening file:%s\n",fname);
+            exit(1);
+	  }
+	  fread(temp,sizeof(float),global_N3_smooth,fid);
+	  fclose(fid);
+	  for(i=0;i<global_N3_smooth;i++) nHIdz[i] =  nHIdz[i] * (1. - temp[i]) * global_omega_b * 3.0 * pow(H0 * global_hubble,2.0) / (8.0 * PI * G) * pow(1.0+zbox+dz,3.0) * 0.76 / mbar;
+        /************** READ IN XRAY FILES IF USING TS ****************************/
+    
+       
+        if(zbox>(global_Zminsfr-global_Dzsim/10) && global_use_Lya_xrays==1) {
+	  Tcmb=Tcmb0*(1.+zbox);
+	  Tcmbdz=Tcmb0*(1.+zbox+dz);
+	  sprintf(fname,"%s/x_c/xc_z%.3lf_N%ld_L%.0f.dat",argv[1],zbox,global_N_smooth,global_L);
+	  if((fid = fopen(fname,"rb"))==NULL) {
+	    printf("Error opening file:%s\n",fname);
+	    exit(1);
+	  }
+	  fread(temp,sizeof(float),global_N3_smooth,fid);
+	  fclose(fid);
+	  for(i=0;i<global_N3_smooth;i++) t21[i]=(double)temp[i];
+          
+	  sprintf(fname,"%s/x_c/xc_z%.3lf_N%ld_L%.0f.dat",argv[1],zbox+dz,global_N_smooth,global_L);
+	  if((fid = fopen(fname,"rb"))==NULL) {
+	    printf("Error opening file:%s\n",fname);
+	    exit(1);
+	  }
+	  fread(temp,sizeof(float),global_N3_smooth,fid);
+	  fclose(fid);
+	  for(i=0;i<global_N3_smooth;i++) t21dz[i]=(double)temp[i];
+          
+	  sprintf(fname,"%s/Lya/xalpha_z%.3lf_N%ld_L%.0f.dat",argv[1],zbox,global_N_smooth,global_L);
+	  if((fid = fopen(fname,"rb"))==NULL) {
+	    printf("Error opening file:%s\n",fname);
+	    exit(1);
+	  }
+	  fread(temp,sizeof(float),global_N3_smooth,fid);
+	  fclose(fid);
+	  aver=0.;
+	  for(i=0;i<global_N3_smooth;i++) {
+	    xtot=(double)temp[i]+t21[i];
+	    t21[i]=xtot/(1.+xtot);
+	  }
+	  sprintf(fname,"%s/Lya/xalpha_z%.3lf_N%ld_L%.0f.dat",argv[1],zbox+dz,global_N_smooth,global_L);
+	  if((fid = fopen(fname,"rb"))==NULL) {
+	    printf("Error opening file:%s\n",fname);
+	    exit(1);
+	  }
+	  fread(temp,sizeof(float),global_N3_smooth,fid);
+	  fclose(fid);
+          
+	  aver=0.;
+	  for(i=0;i<global_N3_smooth;i++) {
+	    xtotdz=(double)temp[i]+t21dz[i];
+	    t21dz[i]=xtotdz/(1.+xtotdz);
+	  }
+          
+	  sprintf(fname,"%s/xrays/TempX_z%.3lf_N%ld_L%.0f.dat",argv[1],zbox,global_N_smooth,global_L);
+	  if((fid = fopen(fname,"rb"))==NULL) {
+	    printf("Error opening file:%s\n",fname);
+	    exit(1);
+	  }
+	  fread(temp,sizeof(float),global_N3_smooth,fid);
+	  fclose(fid);
+	  
+	  for(i=0;i<global_N3_smooth;i++) {
+	    t21[i]=t21[i]*(1.-Tcmb/(double)temp[i]); // Temperature correction for high redshifts
+	    TS[i]=Tcmb/(1.-t21[i]);
+	  }
+            
+            sprintf(fname,"%s/xrays/TempX_z%.3lf_N%ld_L%.0f.dat",argv[1],zbox+dz,global_N_smooth,global_L);
+            if((fid = fopen(fname,"rb"))==NULL) {
+                printf("Error opening file:%s\n",fname);
+                exit(1);
+            }
+            fread(temp,sizeof(float),global_N3_smooth,fid);
+            fclose(fid);
 
-                        for (int kk=0; ; kk++){
-//			    if (kk>=303 && kk <= 455 && myid==0 && ii==396 && jj==283) printf("Here 1: %f  \t %f \t %f \n",nu_i,nu_f,del_nu);
-                            /********************** what cell are we looking at? **********************/
-                            if (z_cell < z ) {break;}
-                            fraction=(z_cell-z)/(dz);
-			    if (evo==0) fraction=0.0; // testing only
-                            if (fraction  < 0.0) fraction=0.0;
-                            k_r =  d_box - r; // comoving distance in k direction
-                            k = round(k_r/del_r);
-                            k_sm = k;// pixel index equivalent in small box boundary conditions
-                            for (int jjj=0;;jjj++) if (k_sm<0)  k_sm+=global_N_smooth; else break;
-                            for (int jjj=0;;jjj++) if (k_sm>=global_N_smooth) k_sm-=global_N_smooth; else break;
-			    
-                            del_r_lc = r * sin(FoV) / Dim;
-                            
-                            j_r = (jj - Dim/2) * del_r_lc ; // comoving distance in j direction
-                            j = round(j_r/del_r)+global_N_smooth/2;
-                            j_sm = j;// pixel index equivalent in small box boundary conditions
-                            for (int jjj=0;;jjj++) if (j_sm<0)  j_sm+=global_N_smooth; else break;
-                            for (int jjj=0;;jjj++) if (j_sm>=global_N_smooth) j_sm-=global_N_smooth; else break;
-                            fraction_j = (round(j_r/del_r)-j_r/del_r);
-                            
-                            i_r = (ii - Dim/2) * del_r_lc ; // comoving distance in i direction
-                            i = round(i_r/del_r)+global_N_smooth/2;
-                            i_sm = i;
-                            for (int jjj=0;;jjj++) if (i_sm<0)  i_sm+=global_N_smooth; else break;
-                            for (int jjj=0;;jjj++) if (i_sm>=global_N_smooth) i_sm-=global_N_smooth; else break;
-                            fraction_i = (round(i_r/del_r)-i_r/del_r);
-			    
+            for(i=0;i<global_N3_smooth;i++) {
+                t21dz[i]=t21dz[i]*(1.-Tcmbdz/(double)temp[i]); // Temperature correction for high redshifts
+                TSdz[i]=Tcmbdz/(1.-t21dz[i]);
+            }
+	}
+	else {
+            for(i=0;i<global_N3_smooth;i++) TS[i]=100000.0;
+            for(i=0;i<global_N3_smooth;i++) TSdz[i]=100000.0;
+	    
+        }
+        
+
+        fflush(stdout);
+	  }
+
+	
+	
+	  k_r =  d_box - r; // comoving distance in k direction
+	  k = round(k_r/del_r);
+	  k_sm = k;// pixel index equivalent in small box boundary conditions
+	  for (int jjj=0;;jjj++) if (k_sm<0)  k_sm+=global_N_smooth; else break;
+	  for (int jjj=0;;jjj++) if (k_sm>=global_N_smooth) k_sm-=global_N_smooth; else break;
+
+	  		  
+		  fraction=(z-zbox)/(dz);
+		  if (evo==0) fraction=0.0; // testing only
+		  if (fraction  < 0.0) fraction=0.0;
+				    
+		  del_r_lc = r * sin(FoV) / Dim;
+
+		  
+	  for (int mm=0;mm<n_maps;mm++){
+	    nu_p = nu2 + (2.0*mm+1.0)*del_nu_lc/2.0;
+
+
+	      
+	    for (int ii=0;ii<Dim;ii++){
+	      
+	      for (int jj=0;jj<Dim;jj++){
+		//      ij = ii+jj*Dim;
+		//     if (ij % numProcs == myid){                  
+		  
+		  
+		  /********************** what cell are we looking at? **********************/
+       
+                  
+		  j_r = (jj - Dim/2) * del_r_lc ; // comoving distance in j direction
+		  j = round(j_r/del_r)+global_N_smooth/2;
+		  j_sm = j;// pixel index equivalent in small box boundary conditions
+		  for (int jjj=0;;jjj++) if (j_sm<0)  j_sm+=global_N_smooth; else break;
+		  for (int jjj=0;;jjj++) if (j_sm>=global_N_smooth) j_sm-=global_N_smooth; else break;
+		  fraction_j = (round(j_r/del_r)-j_r/del_r);
+                  
+		  i_r = (ii - Dim/2) * del_r_lc ; // comoving distance in i direction
+		  i = round(i_r/del_r)+global_N_smooth/2;
+		  i_sm = i;
+		  for (int jjj=0;;jjj++) if (i_sm<0)  i_sm+=global_N_smooth; else break;
+		  for (int jjj=0;;jjj++) if (i_sm>=global_N_smooth) i_sm-=global_N_smooth; else break;
+		  fraction_i = (round(i_r/del_r)-i_r/del_r);
+		  
 			
-                            /******************* CALCULATE |V|, |DVDS|, nHI IN CELL ***************/
+		  /******************* CALCULATE |DVDS IN CELL ***************/
+
+		  dvds_H_interp = cell_interp(dvds_H,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+		  dvds_Hdz_interp = cell_interp(dvds_Hdz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+		  dvds_H_pix =
+		    (dvds_H_interp)*(1-fraction) +
+		    (dvds_Hdz_interp)*(fraction);
+		  
                             
-                            v_c_interp = cell_interp(v_c,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-                            v_cdz_interp = cell_interp(v_cdz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-                            v_c_pix =
-                            (v_c_interp)*(1-fraction) +
-                            (v_cdz_interp)*(fraction);
-                            
-                            dvds_H_interp = cell_interp(dvds_H,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-                            dvds_Hdz_interp = cell_interp(dvds_Hdz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-                            dvds_H_pix =
-                            (dvds_H_interp)*(1-fraction) +
-                            (dvds_Hdz_interp)*(fraction);
+		  if (pv==0){
+		    v_c_pix=0;
+		    dvds_H_pix=0;
+		  }
+		  /***************************************************************************/
+		  if (kk==0) {
+		    v_c_interp = cell_interp(v_c,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+		    v_cdz_interp = cell_interp(v_cdz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+		    v_c_pix =
+		      (v_c_interp)*(1-fraction) +
+		      (v_cdz_interp)*(fraction);
+		    nu_last[mm+n_maps*(jj+Dim*ii)] = nu_p * (1.0 + z) * (1.0 + v_c_pix);		    
+		  }
+		  nu_i=nu_last[mm+n_maps*(jj+Dim*ii)];
+		  del_nu = nu_i * del_s/c_Mpc_h * Hz(z) * (1.0 + dvds_H_interp);
+		  nu_f = nu_i - del_nu;
+		  nu_last[mm+n_maps*(jj+Dim*ii)] = nu_f;
+		  if (dnu_off==1) del_nu = 0.0;
+		  
+
+		  
+                                /************Do we have a 21-cm event?**************/
+			  
+		  //	  if (myid==0 && ii==0 && jj==32) printf("%f \t %f  \t %f \t %d \t %f \t %f \t %f \t %f \n",z,r,rmax,kk ,nu_p, nu_i,nu_f,del_s); 
+			
+
+			      //   if (myid==0) printf("%e \t %d  \t  %d  \t %e \t %e \t %e \t %e \t %e \t %e \t %e \n",z,kk ,k,del_nu, nu_i,nu_f,nu_p,r,del_s * (1.0 + z_cell),del_r); 
+			      	      if (!(((nu_i<(nu21-del_nu_21/2.0)) && (nu_f<(nu21-del_nu_21/2.0))) || ((nu_i>(nu21+del_nu_21/2.0)) && (nu_f>(nu21+del_nu_21/2.0))))) // added 10/2 to charcterise in terms of non-events
+                                {
+				  //	if (zevent==1.0) printf("Events at this redshift!"); 
+
+		  /******************* CALCULATE |V|, |DVDS|, nHI IN CELL ***************/         
                             
                             nHI_interp = cell_interp(nHI,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
                             nHIdz_interp = cell_interp(nHIdz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
@@ -519,44 +713,18 @@ int main(int argc, char * argv[]){
                             (nHI_interp)*(1-fraction) +
                             (nHIdz_interp)*(fraction);
                             
-                            t21_interp = cell_interp(t21,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-                            t21dz_interp = cell_interp(t21dz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-                            t21_pix =
-                            (t21_interp)*(1-fraction) +
-                            (t21dz_interp)*(fraction);
+                          
 
 			    TS_interp = cell_interp(TS,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
                             TSdz_interp = cell_interp(TSdz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
                             TS_pix =
 			      (TS_interp)*(1-fraction) +
                             (TSdz_interp)*(fraction);
-                            
-                           // if (myid==0) printf("CiC: %e \t %f \t %f \t %f \t %e \n",t21[k_sm+global_N_smooth*(j_sm+global_N_smooth*i_sm)],del_r,fraction_i,fraction_j,t21_interp);
+			    
 
-                            
-                            if (pv==0){
-                                v_c_pix=0;
-                                dvds_H_pix=0;
-                            }
-                            /***************************************************************************/
-			    if (kk==0) {
-			      v_c_i = cell_interp(v_c,del_r,fraction_i,fraction_j,i_sm,j_sm,0);
-			      nu_i = nu_p * (1.0 + z_i) * (1.0 + v_c_i);
-			      Tcmb=Tcmb0*(1+z_i);
-			      Icmb = Tcmb * 2.0*k_b*pow(nu_i,2.0)/pow(c_m,2.0)*1.0e12 * (1.0+3.0*v_c_i);
-			    }
-                            del_nu = nu_i * del_s/c_Mpc_h * Hz(z_cell) * (1.0 + dvds_H_interp);
-                            nu_f = nu_i - del_nu;
-                            if (dnu_off==1) del_nu = 0.0;
-         
-                            if (z_cell <= z+dz) // As otherwise no 21-cm event will be observed as photon arrives before/after our time.
-                            {
-                                /************Do we have a 21-cm event?**************/
-			      //      if (myid==0 && ii==396 && jj==283) printf("%e \t %d  \t  %d  \t %e \t %e \t %e \t %e \t %e \t %e \t %e \n",z,kk ,k,del_nu, nu_i,nu_f,dvds_H_interp,r,del_s * (1.0 + z_cell),del_r); 
-			      	      if (!(((nu_i<(nu21-del_nu_21/2.0)) && (nu_f<(nu21-del_nu_21/2.0))) || ((nu_i>(nu21+del_nu_21/2.0)) && (nu_f>(nu21+del_nu_21/2.0))))) // added 10/2 to charcterise in terms of non-events
-                                {
-				  if (myid==0 && ii==396 && jj==283) printf("EVENT!");  
-				zevent=1.0;
+				  //	  if (myid==0 && ii==0 ) printf("%e \t %f  \t %d \t  %d \t %d  \t  %d  \t %e \t %e \t %e \t %e \t %e \t %e \t %e \n",z,z_cell,kk ,k,ii,jj,del_nu, nu_i,nu_f,nu_p,r,del_s * (1.0 + z_cell),del_r); 
+				  //if (myid==0 && ii==396 && jj==283) printf("EVENT!");  
+				  zevent=1.0;
 				  if (del_nu < 0){ // changed to _rest 10/2/16
 				    nu_max = nu_f;
 				    nu_temp = nu21+del_nu_21/2.0;
@@ -577,64 +745,66 @@ int main(int argc, char * argv[]){
 				      if (nu_min <= nu_temp) {nu_min = nu_temp;}
                                     }
 
-				  if (nu_max == nu_min) del_I = 1.60137e-40 * nHI_pix / del_nu_21;
-				  else if (nu_max < nu_min) del_I = 0.0;
-				  else if (nu_max > nu_min) del_I = 1.60137e-40/(Hz(z_cell)*(1.0+dvds_H_pix)) *
+				  if (fabs(1.0+dvds_H_pix) < 1e-30) {del_I = 1.60137e-40 * nHI_pix / del_nu_21 * del_s; printf("HOT");}
+				  //	  else if (nu_max < nu_min) del_I = 0.0;
+				  else del_I = 1.60137e-40/(Hz(z)*fabs(1.0+dvds_H_pix)) *
 							      nHI_pix* c_m * (nu_max - nu_min) / ((nu21*1.0e6) * del_nu_21);
-//				  if (myid==0 && ii==396 && jj==283) printf("Here 2: %f \t %f \t %f  \t %f \t %f \n",v_c_i,dvds_H_interp,nu_i,nu_f,del_nu); 
-//				  if (myid==0 && ii==396 && jj==283) printf("%d  \t %e \t %e \t %e \t %e \t %e \t %e \t %e \t %e \n",kk ,nu_max -nu_min, nu_i,nu_f,nu21+del_nu_21/2.0,nu21-del_nu_21/2.0,del_I,del_s,del_nu_21); // for line_follower.m
-				  if (ii==396 && jj==283 && nu_p==65.65) printf("%e \t %d  \t  %d  \t %e \t %e \t %e \t %e \t %e \t %e \t  %e \t %e \n",z,kk ,k,del_nu, nu_i,nu_f,dvds_H_interp,r,del_s * (1.0 + z_cell),del_r,nu_p); 
-
-				  // ADJUST FOR HIGH REDSHIFT
-				  if(z>(global_Zminsfr-global_Dzsim/10) && global_use_Lya_xrays==1) {
+//				 
+				  //	  if (myid==0 && (del_I * pow(nu_p/nu21,3.0)*c_m*c_m/(2.0*k_b*nu_p*nu_p*1.0e12))>0.5) printf("%d \t %d \t %d \t %e  \t %e  \t %e  \t %e  \t %e  \t  %e \t  %e  \t %e  \t %e  \t %e  \n", ii,jj,k,z,Hz(z),dvds_H_pix,fabs(1.0+dvds_H_pix),nu_max-nu_min,nHI_pix,del_I,del_I* pow(nu_p/nu21,3.0)*c_m*c_m/(2.0*k_b*nu_p*nu_p*1.0e12),1.6e-40 *nHI_pix/del_nu_21 * del_s, 1.6e-40* nHI_pix/del_nu_21 * del_s *c_m*c_m/(2.0*k_b*nu_p*nu_p*1.0e12));
+				  if (myid==0) printf(" %e  \t %e  \t %e \n",fabs(1.0+dvds_H_pix),nu_max-nu_min,del_I* pow(nu_p/nu21,3.0)*c_m*c_m/(2.0*k_b*nu_p*nu_p*1.0e12),1.6e-40 *nHI_pix/del_nu_21 * del_s); 
+			
+			
 				    if (oneevent==1) {
-				      if (myid==0 && ii==396 && jj==283) printf(" %e \n",del_I);
+				    
+				      Tcmb=Tcmb0*(nu21/nu_p);
+			              Icmb = Tcmb * 2.0*k_b*pow(nu21,2.0)/pow(c_m,2.0)*1.0e12;
+
 				      del_I =  del_I * (1 - (Icmb / ((2*k_b/pow((c_m/1420.0e6),2.0)) * TS_pix)));
 				  
 				    }				    
 				    else{
-				      //	      if (myid==0 && ii==396 && jj==283) printf("HERE22 %e \t %e\n",del_I * (1 - (Icmb / ((2*k_b/pow((c_m/1420.0e6),2.0)) * TS_pix))),del_I * (1 - ((Icmb+I21[mm+n_maps*(jj+Dim*ii)]) / ((2*k_b/pow((c_m/1420.0e6),2.0)) * TS_pix))));				    
-				      del_I =  del_I * (1 - ((Icmb+I21[mm+n_maps*(jj+Dim*ii)]) / ((2*k_b/pow((c_m/1420.0e6),2.0)) * TS_pix)));				      
+							    
+				      del_I =  del_I * (1 - ((I21[mm+n_maps*(jj+Dim*ii)]) / ((2*k_b/pow((c_m/1420.0e6),2.0)) * TS_pix)));				      
 				    }
 				    
-				  }
+			
+			     
 				  
 				  //  del_I = del_I * pow((1.0-v_c_pix),3.0); wrong now?
 				  
 				    
 				  // Add intensity to appropriate map
 				  
-				  I21[mm+n_maps*(jj+Dim*ii)] = I21[mm+n_maps*(jj+Dim*ii)]*(1.0 - 3.0 * del_s/c_Mpc_h * Hz(z_cell) * (1.0 - dvds_H_interp)) + del_I ;
-				  nu_last[mm+n_maps*(jj+Dim*ii)] = nu_f; // records last frequency of event for final adjustment later.
-				  if (num[mm+n_maps*(jj+Dim*ii)] == 0) nu_first[mm+n_maps*(jj+Dim*ii)] = nu_i;
+				  I21[mm+n_maps*(jj+Dim*ii)] = I21[mm+n_maps*(jj+Dim*ii)] + del_I ;
+				  //	  nu_last[mm+n_maps*(jj+Dim*ii)] = nu_f; // records last frequency of event for final adjustment later.
+				  //  if (num[mm+n_maps*(jj+Dim*ii)] == 0) nu_first[mm+n_maps*(jj+Dim*ii)] = nu_i;
 				  
 				  num[mm+n_maps*(jj+Dim*ii)] = num[mm+n_maps*(jj+Dim*ii)] + 1 ;
-                                }
-                            }
-                            r = r - del_s * (1.0 + z_cell);
-                            z_cell = z_cell - del_s *(1+z_cell)*Hz(z_cell)/c_Mpc_h; // z of next pixel
+                                } 
+		
+                          
+			    	  
 	
-                            nu_i = nu_f;
-//			    if (kk>=303 && kk <= 455 && myid==0 && ii==396 && jj==283) printf("Here 3: %f  \t %f \t %f \n",nu_i,nu_f,del_nu);
-			    //    if (myid==0 && ii==396 && jj==283) printf( "%e \t %e \n",nu_i,nu_f);
-                        } // end of kk loop i.e. line of sight ended
-                    }// end of filling of this map
-		    //   if (ii==396 && jj==283) printf("here3: %ld \n",num[0+n_maps*(jj+Dim*ii)]);
-                } // MPI loop
-            } // end of jj loop
-        } // end of ii loop
-	//if (zevent==1.0) printf("Events at this redshift!"); 
-    } // end of redshift cycle
+	    
+		  //	} // end of MPI
+	      }// end of jj loop
+	    } // end of ii loop
+	  }// end of maps
+	  r = r - del_s * (1.0 + z);
+	  z = z - del_s *(1+z)*Hz(z)/c_Mpc_h; // z of next pixel
+        } //end of kk loop
+
+ 
     // CONVERT TO Tb
     
-    // OUTPUT MAPS - ONLY FOR ONE PROCESSOR.
+	/* // OUTPUT MAPS - ONLY FOR ONE PROCESSOR.
     MPI_Barrier(MPI_COMM_WORLD); // WAITS FOR ALL PROCESSORS TO FINISH
     MPI_Allreduce(I21,all_I21,LC_size,MPI_FLOAT,MPI_SUM,MPI_COMM_WORLD); // MERGES ALL I21 VALUES FROM EACH PROCESSOR
     MPI_Allreduce(num,all_num,LC_size,MPI_LONG,MPI_SUM,MPI_COMM_WORLD);
     MPI_Allreduce(nu_last,all_nu_last,LC_size,MPI_FLOAT,MPI_SUM,MPI_COMM_WORLD);
-    MPI_Barrier(MPI_COMM_WORLD); // WAITS FOR ALL PROCESSORS TO FINISH MERGING
+    MPI_Barrier(MPI_COMM_WORLD); // WAITS FOR ALL PROCESSORS TO FINISH MERGING*/
     
-    if (myid==0){
+       if (myid==0){
       for (int mm=0;mm<n_maps;mm++)
 	{
 	  nu_p = nu2 + (2.0*mm+1.0)*del_nu_lc/2.0; // middle of frequency bin being observed
@@ -649,17 +819,15 @@ int main(int argc, char * argv[]){
 		{
 		  
 		  //ADJUST TO OBSERVATION FREQUENCY
-		  
-		  if (all_num[mm+n_maps*(jj+Dim*ii)] != 0){
-		    all_I21[mm+n_maps*(jj+Dim*ii)] = all_I21[mm+n_maps*(jj+Dim*ii)] * pow((nu_p/all_nu_last[mm+n_maps*(jj+Dim*ii)]),3.0)*c_m*c_m/(2.0*k_b*nu_p*nu_p*1.0e12);
+		  		  
+		    I21[mm+n_maps*(jj+Dim*ii)] = I21[mm+n_maps*(jj+Dim*ii)] * pow(nu_p/nu21,3.0)   *c_m*c_m/(2.0*k_b*nu_p*nu_p*1.0e12) - Tcmb0;
 		    
-		  }
-		  ave = ave+all_I21[mm+n_maps*(jj+Dim*ii)]; aven = aven+1;		  
+		  ave = ave+I21[mm+n_maps*(jj+Dim*ii)]; aven = aven+1;		  
 		}
             }
         }
       
-    }
+        }
    
     ave = ave/aven * 1000.;
     if (myid==0) printf("average pixel value (mK): %e \n",ave);
@@ -672,7 +840,7 @@ int main(int argc, char * argv[]){
             printf("Cannot open file:%s...\n",fname);
             exit(1);
         }
-        fwrite(all_I21,sizeof(float),LC_size,fid);
+        fwrite(I21,sizeof(float),LC_size,fid);
         fclose(fid);
     }
     
@@ -682,12 +850,12 @@ int main(int argc, char * argv[]){
             printf("Cannot open file:%s...\n",fname);
             exit(1);
         }
-        fwrite(all_num,sizeof(long),LC_size,fid);
+        fwrite(num,sizeof(long),LC_size,fid);
         fclose(fid);
     }
     
-    MPI_Barrier(MPI_COMM_WORLD);  
-    MPI_Finalize ();
+    //   MPI_Barrier(MPI_COMM_WORLD);  
+    // MPI_Finalize ();
     
     return 0;
 }
