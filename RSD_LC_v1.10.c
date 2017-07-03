@@ -156,7 +156,7 @@ int main(int argc, char * argv[]){
     long long aven=0;
     float zevent=0.0,zbox, rmax;    
     FoV = (FoVdeg*pi)/180.0 ;// in radians
-    
+    float ds2;    
     
     /* Check for correct number of parameters*/
     if(argc == 1 || argc > 10) {
@@ -300,12 +300,8 @@ int main(int argc, char * argv[]){
     del_s = (c_Mpc_h/Hz(zmax))*(dz/(1.0+zmax));
     del_s_pix = del_r/(1.0+zmax);
     del_s_nu21 = (get_int_r(nu21/(nu21-del_nu_21)-1.0) - get_int_r(nu21/(nu21+del_nu_21)-1.0))/(1.0+zmax); // for testing 4/2/16
-  // 	del_s = 0.01;
-    if (myid==0) printf("This code will step with ds %f \t %f \t %f \t\n",del_s, del_s_pix,del_s_nu21);
     if (del_s < del_s_nu21) del_s = del_s_nu21;
     if (del_s_pix < del_s) del_s = del_s_pix; // so always one integration point per pixel
-    // del_s = 0.01;
-    printf("del_s condition: %e \n",c_Mpc_h/Hz(zmax)* 1.0/(nu1*1e6));
    
     if (myid==0) printf("This code will step with ds %f \n",del_s);
     
@@ -745,13 +741,15 @@ int main(int argc, char * argv[]){
 				      if (nu_min <= nu_temp) {nu_min = nu_temp;}
                                     }
 
-				  if (fabs(1.0+dvds_H_pix) < 1e-30) {del_I = 1.60137e-40 * nHI_pix / del_nu_21 * del_s; printf("HOT");}
-				  //	  else if (nu_max < nu_min) del_I = 0.0;
-				  else del_I = 1.60137e-40/(Hz(z)*fabs(1.0+dvds_H_pix)) *
-							      nHI_pix* c_m * (nu_max - nu_min) / ((nu21*1.0e6) * del_nu_21);
-//				 
-				  //	  if (myid==0 && (del_I * pow(nu_p/nu21,3.0)*c_m*c_m/(2.0*k_b*nu_p*nu_p*1.0e12))>0.5) printf("%d \t %d \t %d \t %e  \t %e  \t %e  \t %e  \t %e  \t  %e \t  %e  \t %e  \t %e  \t %e  \n", ii,jj,k,z,Hz(z),dvds_H_pix,fabs(1.0+dvds_H_pix),nu_max-nu_min,nHI_pix,del_I,del_I* pow(nu_p/nu21,3.0)*c_m*c_m/(2.0*k_b*nu_p*nu_p*1.0e12),1.6e-40 *nHI_pix/del_nu_21 * del_s, 1.6e-40* nHI_pix/del_nu_21 * del_s *c_m*c_m/(2.0*k_b*nu_p*nu_p*1.0e12));
-				  if (myid==0) printf(" %e  \t %e  \t %e \n",fabs(1.0+dvds_H_pix),nu_max-nu_min,del_I* pow(nu_p/nu21,3.0)*c_m*c_m/(2.0*k_b*nu_p*nu_p*1.0e12),1.6e-40 *nHI_pix/del_nu_21 * del_s); 
+                                  if (fabs(1.0+dvds_H_pix) > 0) {
+                                        ds2 = 1.0/(Hz(z)*fabs(1.0+dvds_H_pix)) *
+                                                              c_Mpc_h* (nu_max - nu_min) / (nu21); // Mpc
+                                        if (myid==0) printf(" %e  \t %e \t %e\t %e\n" ,ds2,del_s,1.60137e-40/(Hz(z)*fabs(1.0+dvds_H_pix)) *nHI_pix* c_m * (nu_max - nu_min) / ((nu21*1.0e6) * del_nu_21),1.60137e-40 * nHI_pix * ds2/(del_nu_21*1.e6));
+                                        if (ds2>del_s) ds2 = del_s;
+                                        del_I = 1.60137e-40 * nHI_pix * ds2/(del_nu_21*1.e6) * pc *1.e6; // change units of dels to m. ds2 is in Mpc.
+                                        }
+                                else {
+                                        del_I = 1.60137e-40 * nHI_pix / (del_nu_21*1.e6) * del_s;}
 			
 			
 				    if (oneevent==1) {
