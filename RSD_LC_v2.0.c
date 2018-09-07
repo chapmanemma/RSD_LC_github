@@ -6,7 +6,7 @@ This code has been gutted by Mario
  Please cite the accompanying paper () when publishing work which uses this code.
  
  USAGE:
- ./RSD_LC_v1.1.c workdir nu1 nu2 del_nu_lc FoV_deg [LC_Dim] [z1] [z2]
+ ./RSD_LC workdir nu1 nu2 del_nu_lc FoV_deg [LC_Dim] [z1] [z2]
  workdir: Working directory containing box folders. Lightcone will be output here in folder "Lightcone"
  nu1: Frequency of first map in light cone (MHz)
  nu2: Frequency of last map in light cone (MHz)
@@ -101,14 +101,14 @@ int main(int argc, char * argv[]){
   oneevent= 0; // set to one if want intital intensity of cell always to be CMB
   dnu_off = 0; // set to 1 if want to set d_nu = 0
   evo=1; //set to 1 to interpolate between z, z+dz boxes according to z_cell
-  lc_on = 1; //output original, slice and dice lightcone if set to 1
+  lc_on = 0; //output original method lightcone if set to 1
   //******************************************************************************************
   
   char fname[256];
   FILE *fid;
   float *temp;
   float *z_p;
- int nmaxcut=0, nmincut=0;
+  int nmaxcut, nmincut;
   double Icmb,Tcmb,xtot,aver,xtotdz;
   float *t21,*t21dz, *xHII, *xHIIdz;
   float v_c_interp,v_cdz_interp,nHI_interp,nHIdz_interp,TS_interp,TSdz_interp;
@@ -153,7 +153,6 @@ int main(int argc, char * argv[]){
   long long LC_size;
   double fraction;
   double Tcmbdz;
-  long *num,*all_num;
   float del_s_nu21;
   float ave=0.0;
   long long aven=0;
@@ -161,9 +160,9 @@ int main(int argc, char * argv[]){
   FoV = (FoVdeg*pi)/180.0 ;// in radians
   float ds2;    
   const double maxcut=1.0;
-const double mincut=-0.5;
- float r_p,k_p,k_sm_p,k_r_p;
- 
+  const double mincut=-0.5;
+  float r_p,k_r_p;
+  int k_p, k_sm_p;
   /* Check for correct number of parameters*/
   if(argc == 1 || argc > 10) {
     printf("Usage :  RSD_LC_v1.0.c workdir nu1 nu2 del_nu_lc FoV_deg [LC_Dim] [zmin] [zmax] [dz]\n");
@@ -171,7 +170,6 @@ const double mincut=-0.5;
   }
   del_nu_21 = nu21/c_m * pow((2.0 * 10000.0 * 1.3806503e-23 / mbar) ,0.5);
   if (myid==0) printf("del_nu_21: %f \n", del_nu_21);
-  // del_nu_21 = del_nu_21 * 10.0; // TESTING ONLY
   c_Mpc_h = c_m/(pc*1.0e6)*global_hubble;
   
   /* getting the minimum and maximum z of the boxes */
@@ -268,8 +266,8 @@ const double mincut=-0.5;
     exit(1);
   }
   if(!(t21dz=(float *) malloc(global_N3_smooth*sizeof(float)))) {
-        printf("Problem allocating memory to arrays...\n");
-        exit(1);
+    printf("Problem allocating memory to arrays...\n");
+    exit(1);
   }
   
   if(!(xHII=(float *) malloc(global_N3_smooth*sizeof(float)))) {
@@ -277,10 +275,10 @@ const double mincut=-0.5;
     exit(1);
   }
   if(!(xHIIdz=(float *) malloc(global_N3_smooth*sizeof(float)))) {
-        printf("Problem allocating memory to arrays...\n");
-        exit(1);
+    printf("Problem allocating memory to arrays...\n");
+    exit(1);
   }
-
+  
   if(!(TS=(float *) malloc(global_N3_smooth*sizeof(float)))) {
     printf("Problem allocating memory to arrays...\n");
     exit(1);
@@ -307,47 +305,32 @@ const double mincut=-0.5;
   }
   else{
     for (int mm=0;mm<n_maps;mm++){
-  for(int ind=0;ind<Dim*Dim;ind++){
+      for(int ind=0;ind<Dim*Dim;ind++){
         I21[mm+n_maps*ind] = 0.0;
       }
-}
+    }
   } 
-
+  
   
   if(!(all_I21=(float *) malloc(LC_size*sizeof(float)))) {
     printf("Problem allocating memory to arrays...\n");
     exit(1);
   }
   
-  // TEST ARRAYS - TO BE DELETED IN FINAL VERSION
-  if(!(num=(long *) malloc(LC_size*sizeof(long)))) {
-    printf("Problem allocating memory to arrays...\n");
-    exit(1);
-  }
-  
-  for(int ind=0;ind<n_maps*Dim*Dim;ind++) num[ind]=0.0;
-  
-  if(!(all_num=(long *) malloc(LC_size*sizeof(long)))) {
-    printf("Problem allocating memory to arrays...\n");
-    exit(1);
-  }
-  
   del_s = (c_Mpc_h/Hz(zmax))*(dz/(1.0+zmax));
   del_s_pix = del_r/(1.0+zmax);
-  del_s_nu21 = (get_int_r(nu21/(nu21-del_nu_21)-1.0) - get_int_r(nu21/(nu21+del_nu_21)-1.0))/(1.0+zmax); // for testing 4/2/16
-  // if (del_s < del_s_nu21) del_s = del_s_nu21;
   if (del_s_pix/5.0 < del_s) del_s = del_s_pix/5.0; // so always one integration point per pixel
-
-  if (lc_on == 1) del_s = del_s_pix;
+  
+  if (lc_on == 1) del_s = del_s_pix/2.0; // if exactly cell size numerical error sbuild up and miss slices.
   if (myid==0) printf("This code will step with ds %f \n",del_s);
-
+  
   
   zevent=0.0;
-
- for (int mm=0;mm<n_maps;mm++){
-      nu_p = nu2 + (2.0*mm+1.0)*del_nu_lc/2.0;
-      z_p[mm] = nu21/nu_p - 1.;
- }
+  
+  for (int mm=0;mm<n_maps;mm++){
+    nu_p = nu2 + (2.0*mm+1.0)*del_nu_lc/2.0;
+    z_p[mm] = nu21/nu_p - 1.;
+  }
   
   
   
@@ -394,6 +377,8 @@ const double mincut=-0.5;
     exit (1);}
   fread(temp,sizeof(float),global_N3_smooth,fid);
   fclose(fid);
+  for(i=0;i<global_N3_smooth;i++) dnl[i] = (temp[i]);
+       
   sprintf(fname, "%s/delta/deltanl_z%.3f_N%ld_L%.0f.dat",argv[1],zmax,global_N_smooth,global_L);
   fid=fopen(fname,"rb");
   if (fid==NULL) {
@@ -403,7 +388,7 @@ const double mincut=-0.5;
   fclose(fid);
   
   for(i=0;i<global_N3_smooth;i++) dnldz[i] = (temp[i]);
-
+  
   sprintf(fname,"%s/Ionization/xHII_z%.3f_eff%.2lf_N%ld_L%.0f.dat",argv[1],zmax-dz,global_eff,global_N_smooth,global_L);
   if((fid = fopen(fname,"rb"))==NULL) {
     printf("Error opening file:%s\n",fname);
@@ -412,7 +397,7 @@ const double mincut=-0.5;
   fread(temp,sizeof(float),global_N3_smooth,fid);
   fclose(fid);
   for(i=0;i<global_N3_smooth;i++) xHII[i] = (temp[i]);
-
+  
   for(i=0;i<global_N3_smooth;i++) nHI[i] =  (1. - xHII[i]) * (1. + dnl[i]) * global_omega_b * 3.0 * pow(H0 * global_hubble,2.0) / (8.0 * PI * G) * pow(1.0+zmax-dz,3.0) * 0.76 / mbar;
   
   sprintf(fname,"%s/Ionization/xHII_z%.3f_eff%.2lf_N%ld_L%.0f.dat",argv[1],zmax,global_eff,global_N_smooth,global_L);
@@ -423,7 +408,7 @@ const double mincut=-0.5;
   fread(temp,sizeof(float),global_N3_smooth,fid);
   fclose(fid);
   for(i=0;i<global_N3_smooth;i++) xHIIdz[i] = (temp[i]);
-
+  
   for(i=0;i<global_N3_smooth;i++) nHIdz[i] =  (1. - xHIIdz[i]) * (1. + dnldz[i]) * global_omega_b * 3.0 * pow(H0 * global_hubble,2.0) / (8.0 * PI * G) * pow(1.0+zmax,3.0) * 0.76 / mbar;
   /************** READ IN XRAY FILES IF USING TS ****************************/
   if(zmax-dz>(global_Zminsfr-global_Dzsim/10) && global_use_Lya_xrays==1) {
@@ -520,18 +505,14 @@ const double mincut=-0.5;
     
     if(z<zbox){
       zevent=0.0;
-      //   if (myid==0) printf("This code will step with ds %f \n",del_s);
       zbox=zbox-dz;
       if (myid==0) printf("Filling maps from redshift %f \n",zbox);
       
       del_s = (c_Mpc_h/Hz(zbox))*(dz/(1.0+zbox));
       del_s_pix = del_r/(1.0+zbox);
-      del_s_nu21 = (get_int_r(nu21/(nu21-del_nu_21)-1.0) - get_int_r(nu21/(nu21+del_nu_21)-1.0))/(1.0+zbox); // for testing 4/2/16
-      //		 if (del_s < del_s_nu21) del_s = del_s_nu21;
-      if (del_s_pix/5.0 < del_s) del_s = del_s_pix/5.0; // sogood sampling per pixel
-        if (lc_on == 1) del_s = del_s_pix;
-	if (myid==0) printf("This code will step with ds %f \n",del_s);
-      //	 if (myid==0) printf("This code will step with ds %f \n",del_s);
+      if (del_s_pix/5.0 < del_s) del_s = del_s_pix/5.0; // so good sampling per pixel
+      if (lc_on == 1) del_s = del_s_pix/2.0;
+      if (myid==0) printf("This code will step with ds %f \n",del_s);
       
       /* upload boxes */
       /************** READ IN VELOCITY AND VELOCITY GRADIENT BOXES ***************/
@@ -559,7 +540,7 @@ const double mincut=-0.5;
       fread(temp,sizeof(float),global_N3_smooth,fid);
       fclose(fid);
       for(i=0;i<global_N3_smooth;i++) dnl[i] = (temp[i]);
-
+      
       sprintf(fname, "%s/delta/deltanl_z%.3f_N%ld_L%.0f.dat",argv[1],zbox+dz,global_N_smooth,global_L);
       fid=fopen(fname,"rb");
       if (fid==NULL) {
@@ -577,13 +558,13 @@ const double mincut=-0.5;
       fread(temp,sizeof(float),global_N3_smooth,fid);
       fclose(fid);
       for(i=0;i<global_N3_smooth;i++) xHII[i] = (temp[i]);
-
+      
       for(i=0;i<global_N3_smooth;i++) nHI[i] =  (1.0 - xHII[i]) * (1. + dnl[i]) * global_omega_b * 3.0 * pow(H0 * global_hubble,2.0) / (8.0 * PI * G) * pow(1.0+zbox,3.0) * 0.76 / mbar;
       
       sprintf(fname,"%s/Ionization/xHII_z%.3f_eff%.2lf_N%ld_L%.0f.dat",argv[1],zbox+dz,global_eff,global_N_smooth,global_L);
       if((fid = fopen(fname,"rb"))==NULL) {
-            printf("Error opening file:%s\n",fname);
-            exit(1);
+	printf("Error opening file:%s\n",fname);
+	exit(1);
       }
       fread(temp,sizeof(float),global_N3_smooth,fid);
       fclose(fid);
@@ -682,8 +663,8 @@ const double mincut=-0.5;
     k_sm = k;// pixel index equivalent in small box boundary conditions
     for (int jjj=0;;jjj++) if (k_sm<0)  k_sm+=global_N_smooth; else break;
     for (int jjj=0;;jjj++) if (k_sm>=global_N_smooth) k_sm-=global_N_smooth; else break;
-
-   
+    
+    
     
     fraction=(z-zbox)/(dz);
     if (evo==0) fraction=0.0; // testing only
@@ -700,29 +681,22 @@ const double mincut=-0.5;
       
       
     }
-    
-    //  printf("%f \t %f \t %f \t %d \t %d\t %f \t %f  \n",z,zbox,nu21/(1.+z),mm_min,mm_max, nu2 + (2.0*mm_min+1.0)*del_nu_lc/2.0, nu2 + (2.0*mm_max+1.0)*del_nu_lc/2.0);
-    
+        
     for (int mm=0;mm<n_maps;mm++){
       nu_p = nu2 + (2.0*mm+1.0)*del_nu_lc/2.0;
       nuevent=0.0;
-
+      
       if (lc_on==1){
-       
+	
 	r_p = get_int_r(z_p[mm]);
 	k_r_p =  d_box - r_p; // comoving distance in k direction
 	k_p = round(k_r_p/del_r);
 	k_sm_p = k_p;// pixel index equivalent in small box boundary conditions
 	for (int jjj=0;;jjj++) if (k_sm_p<0)  k_sm_p+=global_N_smooth; else break;
 	for (int jjj=0;;jjj++) if (k_sm_p>=global_N_smooth) k_sm_p-=global_N_smooth; else break;
-	//	printf("%f \t %f \t %f \t %f \t %f \n",nu_p,z_p[mm],r_p,k_p,k_sm_p);
-	  }
-    
-      
+      }
       if ((lc_on == 1 && z_p[mm]<(zbox+dz) && z_p[mm]>=zbox && (k_sm == k_sm_p)) || (lc_on == 0)){
-	//	if (lc_on == 1) printf("%f \t %f \t %f \t %f \n",nu_p,z,z_p,zbox);
-	for (int ii=0;ii<Dim;ii++){
-	  
+	for (int ii=0;ii<Dim;ii++){	  
 	  for (int jj=0;jj<Dim;jj++){
 	    ij = ii+jj*Dim;
 	    if (ij % numProcs == myid){                  
@@ -732,187 +706,159 @@ const double mincut=-0.5;
 	      
 	      
 	      j_r = (jj - Dim/2) * del_r_lc ; // comoving distance in j direction
-	    j = round(j_r/del_r)+global_N_smooth/2;
-	    j_sm = j;// pixel index equivalent in small box boundary conditions
-	    for (int jjj=0;;jjj++) if (j_sm<0)  j_sm+=global_N_smooth; else break;
-	    for (int jjj=0;;jjj++) if (j_sm>=global_N_smooth) j_sm-=global_N_smooth; else break;
-	    fraction_j = (round(j_r/del_r)-j_r/del_r);
-            
-	    i_r = (ii - Dim/2) * del_r_lc ; // comoving distance in i direction
-	    i = round(i_r/del_r)+global_N_smooth/2;
-	    i_sm = i;
-	    for (int jjj=0;;jjj++) if (i_sm<0)  i_sm+=global_N_smooth; else break;
-	    for (int jjj=0;;jjj++) if (i_sm>=global_N_smooth) i_sm-=global_N_smooth; else break;
-	    fraction_i = (round(i_r/del_r)-i_r/del_r);
-	    
-	    
-	    /******************* CALCULATE |DVDS IN CELL ***************/
-	    
-	    dvds_H_interp = cell_interp(dvds_H,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-	    dvds_Hdz_interp = cell_interp(dvds_Hdz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-	    dvds_H_pix =
-	      (dvds_H_interp)*(1-fraction) +
-	      (dvds_Hdz_interp)*(fraction);
-	    
-            
-	    if (pv==0){
-	      v_c_pix=0;
-	      dvds_H_pix=0;
-	    }
-	    /***************************************************************************/
-	    
-	    v_c_interp = cell_interp(v_c,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-	    v_cdz_interp = cell_interp(v_cdz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-	    v_c_pix =
-	      (v_c_interp)*(1-fraction) +
-	      (v_cdz_interp)*(fraction);
-	    if (kk==0) {
-	      nu_last[mm+n_maps*(jj+Dim*ii)] = nu_p * (1.0 + z) * (1.0 + v_c_pix);		    
-	    }
-	    nu_i=nu_last[mm+n_maps*(jj+Dim*ii)];
-	    del_nu = nu_i * del_s/c_Mpc_h * Hz(z) * (1.0 + dvds_H_pix); //changed from dvds_H_interp 4/7/17
-	    nu_f = nu_i - del_nu;
-	    nu_last[mm+n_maps*(jj+Dim*ii)] = nu_f;
-	    if (dnu_off==1) del_nu = 0.0;
-	    
-	    if (mm>=mm_min || mm<=mm_max){ // added 19/7
-	    
-	    /************Do we have a 21-cm event?**************/
-	    
-	    //	  if (myid==0 && ii==0 && jj==32) printf("%f \t %f  \t %f \t %d \t %f \t %f \t %f \t %f \n",z,r,rmax,kk ,nu_p, nu_i,nu_f,del_s); 
-	    
-	    
-	    
-	      if (lc_on == 1 || (lc_on == 0 && !(((nu_i<(nu21-del_nu_21/2.0)) && (nu_f<(nu21-del_nu_21/2.0))) || ((nu_i>(nu21+del_nu_21/2.0)) && (nu_f>(nu21+del_nu_21/2.0)))))) // added 10/2 to charcterise in terms of non-events
-	      {
-		//	  if (mm==6) printf("%e \t %d  \t  %d  \t %e \t %e \t %e \t %e \n",z,kk ,k,del_nu, nu_i,nu_f,nu_p);
-		//	  if (zbox==25.0 && nu_p == 54.05) printf("%e \t %d  \t  %d  \t %e \t %e \t %e \t %e \n",z,kk ,k,del_nu, nu_i,nu_f,nu_p);
+	      j = round(j_r/del_r)+global_N_smooth/2;
+	      j_sm = j;// pixel index equivalent in small box boundary conditions
+	      for (int jjj=0;;jjj++) if (j_sm<0)  j_sm+=global_N_smooth; else break;
+	      for (int jjj=0;;jjj++) if (j_sm>=global_N_smooth) j_sm-=global_N_smooth; else break;
+	      fraction_j = (round(j_r/del_r)-j_r/del_r);
+	      
+	      i_r = (ii - Dim/2) * del_r_lc ; // comoving distance in i direction
+	      i = round(i_r/del_r)+global_N_smooth/2;
+	      i_sm = i;
+	      for (int jjj=0;;jjj++) if (i_sm<0)  i_sm+=global_N_smooth; else break;
+	      for (int jjj=0;;jjj++) if (i_sm>=global_N_smooth) i_sm-=global_N_smooth; else break;
+	      fraction_i = (round(i_r/del_r)-i_r/del_r);
+	      
+	      
+	      /******************* CALCULATE |DVDS IN CELL ***************/
+	      
+	      dvds_H_interp = cell_interp(dvds_H,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+	      dvds_Hdz_interp = cell_interp(dvds_Hdz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+	      dvds_H_pix =
+		(dvds_H_interp)*(1-fraction) +
+		(dvds_Hdz_interp)*(fraction);
+	      
+	      
+	      if (pv==0){
+		v_c_pix=0;
+		dvds_H_pix=0;
+	      }
+	      /***************************************************************************/
+	      
+	      v_c_interp = cell_interp(v_c,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+	      v_cdz_interp = cell_interp(v_cdz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+	      v_c_pix =
+		(v_c_interp)*(1-fraction) +
+		(v_cdz_interp)*(fraction);
+	      if (kk==0) {
+		nu_last[mm+n_maps*(jj+Dim*ii)] = nu_p * (1.0 + z) * (1.0 + v_c_pix);		    
+	      }
+	      nu_i=nu_last[mm+n_maps*(jj+Dim*ii)];
+	      del_nu = nu_i * del_s/c_Mpc_h * Hz(z) * (1.0 + dvds_H_pix); //changed from dvds_H_interp 4/7/17
+	      nu_f = nu_i - del_nu;
+	      nu_last[mm+n_maps*(jj+Dim*ii)] = nu_f;
+	      if (dnu_off==1) del_nu = 0.0;
+	      
+	      if (mm>=mm_min || mm<=mm_max){ // added 19/7
 		
-				 // if (zevent==0.0 && nuevent ==0.0) printf("Map %f (%f z) filled at box %f \n",nu_p,nu21/nu_p-1.0,zbox); 
-		zevent=1.0;
-		nuevent=1.0;
-		/******************* CALCULATE |V|, |DVDS|, nHI IN CELL ***************/         
-                
-		nHI_interp = cell_interp(nHI,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-		nHIdz_interp = cell_interp(nHIdz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-		nHI_pix =
-		  (nHI_interp)*(1-fraction) +
-		  (nHIdz_interp)*(fraction);
-
-		  xHII_interp = cell_interp(xHII,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-                xHIIdz_interp = cell_interp(xHIIdz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-                xHII_pix =
-                  (xHII_interp)*(1-fraction) +
-                  (xHIIdz_interp)*(fraction);
-
-		dnl_interp = cell_interp(dnl,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-                dnl_interp = cell_interp(dnldz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-                dnl_pix =
-                  (dnl_interp)*(1-fraction) +
-                  (dnldz_interp)*(fraction);
+		/************Do we have a 21-cm event?**************/
 		
-		TS_interp = cell_interp(TS,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-		TSdz_interp = cell_interp(TSdz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-		TS_pix =
-		  (TS_interp)*(1-fraction) +
-		  (TSdz_interp)*(fraction);
-		
-                t21_interp = cell_interp(t21,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-                t21dz_interp = cell_interp(t21dz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
-                t21_pix =
-                  (t21_interp)*(1-fraction) +
-                  (t21dz_interp)*(fraction);
-
-		//if (myid==0 && ii==396 && jj==283) printf("EVENT!");  
-		
-		if (del_nu < 0){ // changed to _rest 10/2/16
-		  nu_max = nu_f;
-		  nu_temp = nu21+del_nu_21/2.0;
-		  if (nu_max >= nu_temp) {nu_max = nu_temp;}
-                  
-		  nu_min = nu_i;
-		  nu_temp = nu21-del_nu_21/2.0;
-		  if (nu_min <= nu_temp) {nu_min = nu_temp;}
-		}
-		else
+		if (lc_on == 1 || (lc_on == 0 && !(((nu_i<(nu21-del_nu_21/2.0)) && (nu_f<(nu21-del_nu_21/2.0))) || ((nu_i>(nu21+del_nu_21/2.0)) && (nu_f>(nu21+del_nu_21/2.0)))))) // added 10/2 to charcterise in terms of non-events
 		  {
-		    nu_max = nu_i;
-		    nu_temp = nu21+del_nu_21/2.0;
-		    if (nu_max >= nu_temp) {nu_max = nu_temp;}
-                    
-		    nu_min = nu_f;
-		    nu_temp = nu21-del_nu_21/2.0;
-		    if (nu_min <= nu_temp) {nu_min = nu_temp;}
-		  }
-
-		if (lc_on == 0 ){
-		  if (fabs(1.0+dvds_H_pix) > 0) {
-		    ds2 = 1.0/(Hz(z)*fabs(1.0+dvds_H_pix)) *
-		      c_Mpc_h* (nu_max - nu_min) / (nu21); // Mpc/h
-		    //     if (ii==45 && jj==354)	 printf("%e \t %e \t %e \t %e \n",del_s,del_s_pix,del_s_nu21,ds2);
+		    zevent=1.0;
+		    nuevent=1.0;
+		    /******************* CALCULATE |V|, |DVDS|, nHI IN CELL ***************/         
 		    
-		    if (ds2>del_s) {ds2 = del_s;
+		    nHI_interp = cell_interp(nHI,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+		    nHIdz_interp = cell_interp(nHIdz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+		    nHI_pix =
+		      (nHI_interp)*(1-fraction) +
+		      (nHIdz_interp)*(fraction);
+		    
+		    xHII_interp = cell_interp(xHII,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+		    xHIIdz_interp = cell_interp(xHIIdz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+		    xHII_pix =
+		      (xHII_interp)*(1-fraction) +
+		      (xHIIdz_interp)*(fraction);
+		    
+		    dnl_interp = cell_interp(dnl,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+		    dnl_interp = cell_interp(dnldz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+		    dnl_pix =
+		      (dnl_interp)*(1-fraction) +
+		      (dnldz_interp)*(fraction);
+		    
+		    TS_interp = cell_interp(TS,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+		    TSdz_interp = cell_interp(TSdz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+		    TS_pix =
+		      (TS_interp)*(1-fraction) +
+		      (TSdz_interp)*(fraction);
+		    
+		    t21_interp = cell_interp(t21,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+		    t21dz_interp = cell_interp(t21dz,del_r,fraction_i,fraction_j,i_sm,j_sm,k_sm);
+		    t21_pix =
+		      (t21_interp)*(1-fraction) +
+		      (t21dz_interp)*(fraction);
+		    		    
+		    if (del_nu < 0){ 
+		      nu_max = nu_f;
+		      nu_temp = nu21+del_nu_21/2.0;
+		      if (nu_max >= nu_temp) {nu_max = nu_temp;}
+		      
+		      nu_min = nu_i;
+		      nu_temp = nu21-del_nu_21/2.0;
+		      if (nu_min <= nu_temp) {nu_min = nu_temp;}
 		    }
-		    del_I = 1.60137e-40 * nHI_pix * (ds2* pc *1.e6 / global_hubble)/(del_nu_21*1.e6);
-		    //del_I = 1.60137e-40 * nHI_pix * ds2/(del_nu_21*1.e6) * pc *1.e6; // change units of dels to m. ds2 is in Mpc/h.
-		    //						if (ii==45 && jj==354) printf("%e \t %e \t %e \t %e \t %e \n",Hz(z),ds2,dvds_H_pix,nHI_pix,del_I);
-		    //	if (ii==45 && jj==354 && nu_p==130.0)	 printf("%e \t %e \t %e \t %e \t %e \n",del_s,del_s_pix,del_s_nu21,ds2,del_I);
-		    //    if (ii==45 && jj==354)	 printf("%e \t %e \n",ds2,del_I);
-		  }
-		  else {
-		    //	  del_I = 1.60137e-40 * nHI_pix / (del_nu_21*1.e6) * del_s;
-		    del_I = 1.60137e-40 * nHI_pix / (del_nu_21*1.e6) *(del_s * pc *1.e6 / global_hubble);
-		  }
-		}
-
+		    else
+		      {
+			nu_max = nu_i;
+			nu_temp = nu21+del_nu_21/2.0;
+			if (nu_max >= nu_temp) {nu_max = nu_temp;}
+			
+			nu_min = nu_f;
+			nu_temp = nu21-del_nu_21/2.0;
+			if (nu_min <= nu_temp) {nu_min = nu_temp;}
+		      }
+		    
+		    if (lc_on == 0 ){
+		      if (fabs(1.0+dvds_H_pix) > 0) {
+			ds2 = 1.0/(Hz(z)*fabs(1.0+dvds_H_pix)) *
+			  c_Mpc_h* (nu_max - nu_min) / (nu21); // Mpc/h
+			
+			if (ds2>del_s) {ds2 = del_s;
+			}
+			del_I = 1.60137e-40 * nHI_pix * (ds2* pc *1.e6 / global_hubble)/(del_nu_21*1.e6);
+		      }
+		      else {
+			del_I = 1.60137e-40 * nHI_pix / (del_nu_21*1.e6) *(del_s * pc *1.e6 / global_hubble);
+		      }
+		    }
+		    
+		    
+		    if (lc_on==1){
+		      
+		      if(dvds_H_pix > maxcut) {dvds_H_pix=maxcut; nmaxcut++;}
+		      else if(dvds_H_pix < mincut) {dvds_H_pix=mincut; nmincut++;}
+		         
+		      I21[mm+n_maps*(jj+Dim*ii)]=23.0/1000.*(1.+dnl_pix)*t21_pix/(1.+1.*dvds_H_pix)*(0.7/global_hubble)*(global_omega_b*global_hubble*global_hubble/0.02)*sqrt((0.15/global_omega_m/global_hubble/global_hubble)*(1.+zbox)/10.)*(1.-xHII_pix);			del_I=0.0;	
+		    }
+		    
+		    if (oneevent==1 || lc_on==1) {
+		      
+		      Tcmb=Tcmb0*(nu21/nu_p);
+		      Icmb = Tcmb * 2.0*k_b*pow(nu21,2.0)/pow(c_m,2.0)*1.0e12;
+		      
+		      del_I =  del_I * (1 - (Icmb / ((2*k_b/pow((c_m/1420.0e6),2.0)) * TS_pix)));
+		      
+		    }				    
+		    else{
+		      
+		      del_I =  del_I * (1 - ((I21[mm+n_maps*(jj+Dim*ii)]) / ((2*k_b/pow((c_m/1420.0e6),2.0)) * TS_pix)));				      
+		    }
+		    
+		    // Add intensity to appropriate map
+		    
+		    I21[mm+n_maps*(jj+Dim*ii)] = I21[mm+n_maps*(jj+Dim*ii)] + del_I ;
+	
+		    num[mm+n_maps*(jj+Dim*ii)] = num[mm+n_maps*(jj+Dim*ii)] + 1 ;
+		  } 
 		
-		if (lc_on==1){
-		  
-		    if(dvds_H_pix > maxcut) {dvds_H_pix=maxcut; nmaxcut++;}
-		  	  else if(dvds_H_pix < mincut) {dvds_H_pix=mincut;nmincut++;}
-		  
-//		  	    ds2 = 1.0/(Hz(z)*fabs(1.0+dvds_H_pix)) * c_Mpc_h * del_nu_21 / nu21;
-		  //  del_I = 1.60137e-40 * nHI_pix * (del_s* pc *1.e6 / global_hubble)/(del_nu_21*1.e6);
-//		    del_I = 1.60137e-40 * nHI_pix * (ds2* pc *1.e6 / global_hubble)/(del_nu_21*1.e6);
-			I21[mm+n_maps*(jj+Dim*ii)]=23.0/1000.*(1.+dnl_pix)*t21_pix/(1.+1.*dvds_H_pix)*(0.7/global_hubble)*(global_omega_b*global_hubble*global_hubble/0.02)*sqrt((0.15/global_omega_m/global_hubble/global_hubble)*(1.+zbox)/10.)*(1.-xHII_pix);			del_I=0.0;	
-//			printf("%e \t %e \t %e \t %e \n",dnl_pix,t21_pix,dvds_H_pix,xHII_pix);
-	}
-		
-		if (oneevent==1 || lc_on==1) {
-		  
-		  Tcmb=Tcmb0*(nu21/nu_p);
-		  Icmb = Tcmb * 2.0*k_b*pow(nu21,2.0)/pow(c_m,2.0)*1.0e12;
-		  
-		  del_I =  del_I * (1 - (Icmb / ((2*k_b/pow((c_m/1420.0e6),2.0)) * TS_pix)));
-		  
-		}				    
-		else{
-		  
-		  del_I =  del_I * (1 - ((I21[mm+n_maps*(jj+Dim*ii)]) / ((2*k_b/pow((c_m/1420.0e6),2.0)) * TS_pix)));				      
-		}
 		
 		
-		
-		
-		//  del_I = del_I * pow((1.0-v_c_pix),3.0); wrong now?
-		
-		
-		// Add intensity to appropriate map
-		
-		I21[mm+n_maps*(jj+Dim*ii)] = I21[mm+n_maps*(jj+Dim*ii)] + del_I ;
-		//	  nu_last[mm+n_maps*(jj+Dim*ii)] = nu_f; // records last frequency of event for final adjustment later.
-		//  if (num[mm+n_maps*(jj+Dim*ii)] == 0) nu_first[mm+n_maps*(jj+Dim*ii)] = nu_i;
-		
-		num[mm+n_maps*(jj+Dim*ii)] = num[mm+n_maps*(jj+Dim*ii)] + 1 ;
-	      } 
-	    
-            
-	    
-	    } // end of if mm<mmin condition
-	    
-	  } // end of MPI
-	}// end of jj loop
-      } // end of ii loop
+	      } // end of if mm<mmin condition
+	      
+	    } // end of MPI
+	  }// end of jj loop
+	} // end of ii loop
       } // if lc_on loop
     }// end of maps
     r = r - del_s * (1.0 + z);
@@ -922,37 +868,35 @@ const double mincut=-0.5;
   printf("pixel value: %e \n",I21[87]);
   // CONVERT TO Tb
   
+  
   // OUTPUT MAPS - ONLY FOR ONE PROCESSOR.
-     MPI_Barrier(MPI_COMM_WORLD); // WAITS FOR ALL PROCESSORS TO FINISH
-     MPI_Allreduce(I21,all_I21,LC_size,MPI_FLOAT,MPI_SUM,MPI_COMM_WORLD); // MERGES ALL I21 VALUES FROM EACH PROCESSOR
-     MPI_Allreduce(num,all_num,LC_size,MPI_LONG,MPI_SUM,MPI_COMM_WORLD);
-     MPI_Allreduce(nu_last,all_nu_last,LC_size,MPI_FLOAT,MPI_SUM,MPI_COMM_WORLD);
-     MPI_Barrier(MPI_COMM_WORLD); // WAITS FOR ALL PROCESSORS TO FINISH MERGING
-   if (myid==0)  printf("pixel value: %e \t nmax: %d \t nmin: %d \n",all_I21[87],nmaxcut,nmincut);
+  MPI_Barrier(MPI_COMM_WORLD); // WAITS FOR ALL PROCESSORS TO FINISH
+  MPI_Allreduce(I21,all_I21,LC_size,MPI_FLOAT,MPI_SUM,MPI_COMM_WORLD); // MERGES ALL I21 VALUES FROM EACH PROCESSOR
+  MPI_Allreduce(num,all_num,LC_size,MPI_LONG,MPI_SUM,MPI_COMM_WORLD);
+  MPI_Allreduce(nu_last,all_nu_last,LC_size,MPI_FLOAT,MPI_SUM,MPI_COMM_WORLD);
+  MPI_Barrier(MPI_COMM_WORLD); // WAITS FOR ALL PROCESSORS TO FINISH MERGING
+  
   if (myid==0){
     for (int mm=0;mm<n_maps;mm++)
       {
-	  nu_p = nu2 + (2.0*mm+1.0)*del_nu_lc/2.0; // middle of frequency bin being observed
-	  d_z = get_int_r(1420.0/nu_p - 1.0); //Distance to that redshift
-	  
-	  aven=0;
-	  ave=0.;
-	  
-	  for (int ii=0;ii<Dim;ii++)
-	    {
-	      for (int jj=0;jj<Dim;jj++)
-		{
-		  
-		  //ADJUST TO OBSERVATION FREQUENCY
-		  
-		  if (lc_on==0) all_I21[mm+n_maps*(jj+Dim*ii)] = all_I21[mm+n_maps*(jj+Dim*ii)] * pow(nu_p/nu21,3.0)   *c_m*c_m/(2.0*k_b*nu_p*nu_p*1.0e12) - numProcs*Tcmb0;
-		  else{
-		    //all_I21[mm+n_maps*(jj+Dim*ii)] = all_I21[mm+n_maps*(jj+Dim*ii)] * pow(nu_p/nu21,3.0)   *c_m*c_m/(2.0*k_b*nu_p*nu_p*1.0e12); // don't think we need this at all 13/09/17
-		  }
-		  
-		  ave = ave+all_I21[mm+n_maps*(jj+Dim*ii)]; aven = aven+1;		  
-		}
-            }
+	nu_p = nu2 + (2.0*mm+1.0)*del_nu_lc/2.0; // middle of frequency bin being observed
+	d_z = get_int_r(1420.0/nu_p - 1.0); //Distance to that redshift
+	
+	aven=0;
+	ave=0.;
+	
+	for (int ii=0;ii<Dim;ii++)
+	  {
+	    for (int jj=0;jj<Dim;jj++)
+	      {
+		
+		//ADJUST TO OBSERVATION FREQUENCY
+		
+		if (lc_on==0) all_I21[mm+n_maps*(jj+Dim*ii)] = all_I21[mm+n_maps*(jj+Dim*ii)] * pow(nu_p/nu21,3.0)   *c_m*c_m/(2.0*k_b*nu_p*nu_p*1.0e12) - numProcs*Tcmb0;
+		
+		ave = ave+all_I21[mm+n_maps*(jj+Dim*ii)]; aven = aven+1;		  
+	      }
+	  }
       }
     
   }
@@ -963,29 +907,29 @@ const double mincut=-0.5;
   // OUTPUT ALL MAPS WITH DEL_NU SEPARATION
   
   if (myid==0){
-    sprintf(fname,"%s/deltaTb_RSD/LightconeRSD_N%d_FOV%06.4f_dnu%04.2fMHz_%06.2fMHz_%06.2fMHz_ds%08.6f_div%05.2f_pv%d_oneevent%d_lcon%d_mpi1_maxcut.dat",argv[1],Dim,FoVdeg,del_nu_lc,nu1,nu2,del_s,dsdiv,pv,oneevent,lc_on);
-        if((fid = fopen(fname,"wb"))==NULL) {
-            printf("Cannot open file:%s...\n",fname);
-            exit(1);
-        }
-        fwrite(all_I21,sizeof(float),LC_size,fid);
-        fclose(fid);
+    sprintf(fname,"%s/deltaTb_RSD/LightconeRSD_N%d_FOV%06.4f_dnu%04.2fMHz_%06.2fMHz_%06.2fMHz_ds%08.6f_div%05.2f_pv%d_oneevent%d_lcon%d.dat",argv[1],Dim,FoVdeg,del_nu_lc,nu1,nu2,del_s,dsdiv,pv,oneevent,lc_on);
+    if((fid = fopen(fname,"wb"))==NULL) {
+      printf("Cannot open file:%s...\n",fname);
+      exit(1);
     }
-    
-    if (myid==0){
-      sprintf(fname,"%s/deltaTb_RSD/NUM_RSD_N%d_FOV%06.4f_dnu%04.2fMHz_%06.2fMHz_%06.2fMHz_ds%08.6f_div%05.2f_pv%d_oneevent%d_lcon%d_mpi1_maxcut.dat",argv[1],Dim,FoVdeg,del_nu_lc,nu1,nu2,del_s,dsdiv,pv,oneevent,lc_on);
-        if((fid = fopen(fname,"wb"))==NULL) {
-            printf("Cannot open file:%s...\n",fname);
-            exit(1);
-        }
-        fwrite(all_num,sizeof(long),LC_size,fid);
-        fclose(fid);
+    fwrite(all_I21,sizeof(float),LC_size,fid);
+    fclose(fid);
+  }
+  
+  if (myid==0){
+    sprintf(fname,"%s/deltaTb_RSD/NUM_RSD_N%d_FOV%06.4f_dnu%04.2fMHz_%06.2fMHz_%06.2fMHz_ds%08.6f_div%05.2f_pv%d_oneevent%d_lcon%d.dat",argv[1],Dim,FoVdeg,del_nu_lc,nu1,nu2,del_s,dsdiv,pv,oneevent,lc_on);
+    if((fid = fopen(fname,"wb"))==NULL) {
+      printf("Cannot open file:%s...\n",fname);
+      exit(1);
     }
-    
-       MPI_Barrier(MPI_COMM_WORLD);  
-     MPI_Finalize ();
-    
-    return 0;
+    fwrite(all_num,sizeof(long),LC_size,fid);
+    fclose(fid);
+  }
+  
+  MPI_Barrier(MPI_COMM_WORLD);  
+  MPI_Finalize ();
+  
+  return 0;
 }
 
 
@@ -1007,25 +951,7 @@ float cell_interp(float* box, float del_r, float fraction_i ,float fraction_j, i
     cell_y = (del_r - fraction_ii)*(fraction_jj)/pow(del_r,2.0);
     cell_xy = (fraction_ii)*(fraction_jj)/pow(del_r,2.0);
     
-    
-   /*orig if (fraction_j >= 0) {
-        if (j_sm==0)  j2+=global_N_smooth-1; 
-        else j2 = j_sm-1;
-    }else
-    {
-        if (j_sm==global_N_smooth-1)  j2-=global_N_smooth-1;
-        else j2 = j_sm+1;
-    }
-    
-    if (fraction_i >= 0) {
-        if (i_sm==0)  i2+=global_N_smooth-1; 
-        else i2 = i_sm-1;}else
-        {
-            if (i_sm==global_N_smooth-1)  i2-=global_N_smooth-1;
-            else i2 = i_sm+1;
-        }
-    */
-    
+   
     if (fraction_j <= 0) {
         if (j_sm==0)  j2=global_N_smooth-1;
         else j2 = j_sm-1;
@@ -1049,8 +975,6 @@ float cell_interp(float* box, float del_r, float fraction_i ,float fraction_j, i
     + cell_y * box[(k_sm+global_N_smooth*(j2+global_N_smooth*i_sm))]
     + cell_xy * box[(k_sm+global_N_smooth*(j2+global_N_smooth*i2))];
     
-   // if (j_sm == 0) printf("CiC function: %e \t %e \t %e \t %e \t %e \t %e \t %e \t %e \t %e \t %e \t %d\n",fraction_i,fraction_j,del_r,fraction_ii,fraction_jj,cell_c,cell_x,cell_y,cell_xy,val,j2);
-    //TEST
     val = box[(k_sm+global_N_smooth*(j_sm+global_N_smooth*i_sm))];
     
     return val;
