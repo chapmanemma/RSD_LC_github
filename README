@@ -4,7 +4,11 @@
  Please cite the accompanying paper () when publishing work which uses this code.
  
  USAGE:
- ./RSD_LC_v1.1.c workdir nu1 nu2 del_nu_lc FoV_deg [LC_Dim] [z1] [z2]
+ The code is compiled using the makefile provided with the standard simfast package, by adding a line such as:
+ RSD_LC: $(aux) RSD_LC_v2.0.o
+	mpicc -o RSD_LC RSD_LC_v2.0.o $(aux) $(flags) -L/path/to/mpi/lib -I/path/to/mpi/include 
+ 
+ ./RSD_LC workdir nu1 nu2 del_nu_lc FoV_deg [LC_Dim] [z1] [z2]
  workdir: Working directory containing box folders. Lightcone will be output here in folder "Lightcone"
  nu1: Frequency of first map in light cone (MHz)
  nu2: Frequency of last map in light cone (MHz)
