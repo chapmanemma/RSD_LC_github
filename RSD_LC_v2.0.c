@@ -33,7 +33,7 @@ This code has been gutted by Mario
  
 
  Example:
- mpirun -np 4 ./RSD_LC /Users/echapman/Documents/Data_Cubes/Simfast_200Mpc_z27_z6/Original 142.1 142.0 0.1 1.0 400 8.0 10.0
+ mpirun -np 4 ./RSD_LC /path/to/simulation/coeval/cubes/ 142.1 142.0 0.1 1.0 400 8.0 10.0
  
  *************************************************************/
 #include <mpi.h>
@@ -116,7 +116,6 @@ int main(int argc, char * argv[]){
   float xHII_interp, xHIIdz_interp,dvds_H_interp, dvds_Hdz_interp;
   float fraction_j,fraction_i;
   float nHI_pix,TS_pix,t21_pix,dnl_pix,xHII_pix;
-  float v_c_i;//initial peculiar velocity
   double del_r_lc;
   double zmin,zmax,dz,z;
   double pi=3.14159;
@@ -132,7 +131,7 @@ int main(int argc, char * argv[]){
   double nu_f; // Frequency of photon leaving patch 
   double nu_min, nu_max; // Define intersection of frequency patch with line width
   double del_nu; // Change in frequency of photon traversing patch ds
-  double d_box,del_I,r,r_i,z_i;
+  double d_box,del_I,r;
   double i_r,j_r,k_r;
   int i,j,k,ij;
   int i_sm,j_sm,k_sm; // indices in small box with boundary condt
@@ -153,7 +152,6 @@ int main(int argc, char * argv[]){
   long long LC_size;
   double fraction;
   double Tcmbdz;
-  float del_s_nu21;
   float ave=0.0;
   long long aven=0;
   float zevent=0.0,zbox, rmax;    
@@ -848,9 +846,7 @@ int main(int argc, char * argv[]){
 		    // Add intensity to appropriate map
 		    
 		    I21[mm+n_maps*(jj+Dim*ii)] = I21[mm+n_maps*(jj+Dim*ii)] + del_I ;
-	
-		    num[mm+n_maps*(jj+Dim*ii)] = num[mm+n_maps*(jj+Dim*ii)] + 1 ;
-		  } 
+       		  } 
 		
 		
 		
@@ -865,14 +861,12 @@ int main(int argc, char * argv[]){
     z = z - del_s *(1+z)*Hz(z)/c_Mpc_h; // z of next pixel
   } //end of kk loop
   
-  printf("pixel value: %e \n",I21[87]);
   // CONVERT TO Tb
   
   
   // OUTPUT MAPS - ONLY FOR ONE PROCESSOR.
   MPI_Barrier(MPI_COMM_WORLD); // WAITS FOR ALL PROCESSORS TO FINISH
   MPI_Allreduce(I21,all_I21,LC_size,MPI_FLOAT,MPI_SUM,MPI_COMM_WORLD); // MERGES ALL I21 VALUES FROM EACH PROCESSOR
-  MPI_Allreduce(num,all_num,LC_size,MPI_LONG,MPI_SUM,MPI_COMM_WORLD);
   MPI_Allreduce(nu_last,all_nu_last,LC_size,MPI_FLOAT,MPI_SUM,MPI_COMM_WORLD);
   MPI_Barrier(MPI_COMM_WORLD); // WAITS FOR ALL PROCESSORS TO FINISH MERGING
   
@@ -893,7 +887,6 @@ int main(int argc, char * argv[]){
 		//ADJUST TO OBSERVATION FREQUENCY
 		
 		if (lc_on==0) all_I21[mm+n_maps*(jj+Dim*ii)] = all_I21[mm+n_maps*(jj+Dim*ii)] * pow(nu_p/nu21,3.0)   *c_m*c_m/(2.0*k_b*nu_p*nu_p*1.0e12) - numProcs*Tcmb0;
-		
 		ave = ave+all_I21[mm+n_maps*(jj+Dim*ii)]; aven = aven+1;		  
 	      }
 	  }
@@ -902,7 +895,7 @@ int main(int argc, char * argv[]){
   }
   
   ave = ave/aven * 1000.;
-  if (myid==0) printf("average pixel value (mK): %e \n",ave);
+  //if (myid==0) printf("average pixel value (mK): %e \n",ave);
   
   // OUTPUT ALL MAPS WITH DEL_NU SEPARATION
   
@@ -913,16 +906,6 @@ int main(int argc, char * argv[]){
       exit(1);
     }
     fwrite(all_I21,sizeof(float),LC_size,fid);
-    fclose(fid);
-  }
-  
-  if (myid==0){
-    sprintf(fname,"%s/deltaTb_RSD/NUM_RSD_N%d_FOV%06.4f_dnu%04.2fMHz_%06.2fMHz_%06.2fMHz_ds%08.6f_div%05.2f_pv%d_oneevent%d_lcon%d.dat",argv[1],Dim,FoVdeg,del_nu_lc,nu1,nu2,del_s,dsdiv,pv,oneevent,lc_on);
-    if((fid = fopen(fname,"wb"))==NULL) {
-      printf("Cannot open file:%s...\n",fname);
-      exit(1);
-    }
-    fwrite(all_num,sizeof(long),LC_size,fid);
     fclose(fid);
   }
   
@@ -950,8 +933,8 @@ float cell_interp(float* box, float del_r, float fraction_i ,float fraction_j, i
     cell_x = (fraction_ii)*(del_r - fraction_jj)/pow(del_r,2.0);
     cell_y = (del_r - fraction_ii)*(fraction_jj)/pow(del_r,2.0);
     cell_xy = (fraction_ii)*(fraction_jj)/pow(del_r,2.0);
+
     
-   
     if (fraction_j <= 0) {
         if (j_sm==0)  j2=global_N_smooth-1;
         else j2 = j_sm-1;
@@ -974,7 +957,7 @@ float cell_interp(float* box, float del_r, float fraction_i ,float fraction_j, i
     + cell_x * box[(k_sm+global_N_smooth*(j_sm+global_N_smooth*i2))]
     + cell_y * box[(k_sm+global_N_smooth*(j2+global_N_smooth*i_sm))]
     + cell_xy * box[(k_sm+global_N_smooth*(j2+global_N_smooth*i2))];
-    
+
     val = box[(k_sm+global_N_smooth*(j_sm+global_N_smooth*i_sm))];
     
     return val;
